@@ -1,0 +1,1544 @@
+basePath: /
+definitions:
+  account.Account:
+    properties:
+      balance:
+        type: integer
+      code:
+        type: string
+      createdAt:
+        type: string
+      currency:
+        type: string
+      deactivatedAt:
+        type: string
+      hide_from_dashboard:
+        type: boolean
+      id:
+        type: string
+      name:
+        type: string
+      sortOrder:
+        type: integer
+      type:
+        $ref: '#/definitions/account.AccountType'
+      updatedAt:
+        type: string
+      userID:
+        type: string
+    type: object
+  account.AccountListResponse:
+    properties:
+      accounts:
+        items:
+          $ref: '#/definitions/account.Account'
+        type: array
+    type: object
+  account.AccountResponse:
+    properties:
+      account:
+        $ref: '#/definitions/account.Account'
+    type: object
+  account.AccountType:
+    enum:
+    - ASSET
+    - LIABILITY
+    type: string
+    x-enum-varnames:
+    - AccountTypeAsset
+    - AccountTypeLiability
+  account.ChangeAccountInput:
+    properties:
+      currency:
+        type: string
+      hide_from_dashboard:
+        type: boolean
+      name:
+        type: string
+      type:
+        type: string
+    type: object
+  account.CreateAccountInput:
+    properties:
+      code:
+        type: string
+      currency:
+        type: string
+      hide_from_dashboard:
+        type: boolean
+      name:
+        type: string
+      type:
+        type: string
+    required:
+    - code
+    - currency
+    - name
+    - type
+    type: object
+  account.ReorderAccountsInput:
+    properties:
+      codes:
+        items:
+          type: string
+        type: array
+    required:
+    - codes
+    type: object
+  category.Category:
+    properties:
+      code:
+        type: string
+      createdAt:
+        type: string
+      deactivatedAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      parentID:
+        type: string
+      sortOrder:
+        type: integer
+      subCategories:
+        items:
+          $ref: '#/definitions/category.Category'
+        type: array
+      type:
+        $ref: '#/definitions/category.CategoryType'
+      updatedAt:
+        type: string
+      userID:
+        type: string
+    type: object
+  category.CategoryListResponse:
+    properties:
+      categories:
+        items:
+          $ref: '#/definitions/category.Category'
+        type: array
+    type: object
+  category.CategoryResponse:
+    properties:
+      category:
+        $ref: '#/definitions/category.Category'
+    type: object
+  category.CategoryType:
+    enum:
+    - INCOME
+    - EXPENSE
+    - MOVEMENT
+    type: string
+    x-enum-comments:
+      CategoryTypeMovement: special, can't be created via endpoint
+    x-enum-descriptions:
+    - ""
+    - ""
+    - special, can't be created via endpoint
+    x-enum-varnames:
+    - CategoryTypeIncome
+    - CategoryTypeExpense
+    - CategoryTypeMovement
+  category.ChangeCategoryInput:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      parent_code:
+        type: string
+      type:
+        type: string
+    type: object
+  category.CreateCategoryInput:
+    properties:
+      code:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      parent_code:
+        type: string
+      type:
+        type: string
+    required:
+    - code
+    - description
+    - name
+    - type
+    type: object
+  category.ReorderCategoriesInput:
+    properties:
+      codes:
+        items:
+          type: string
+        type: array
+      parent_code:
+        type: string
+    required:
+    - codes
+    type: object
+  handlers.ErrorDetail:
+    properties:
+      code:
+        example: invalid_input
+        type: string
+      error:
+        example: invalid request body
+        type: string
+    type: object
+  handlers.ErrorResponse:
+    properties:
+      error:
+        $ref: '#/definitions/handlers.ErrorDetail'
+    type: object
+  reports.AccountBalance:
+    properties:
+      accountCode:
+        type: string
+      balance:
+        format: int64
+        type: integer
+    type: object
+  reports.AllBalancesResponse:
+    properties:
+      accounts:
+        items:
+          $ref: '#/definitions/reports.AccountBalance'
+        type: array
+    type: object
+  reports.BalanceByCodeResponse:
+    properties:
+      account:
+        $ref: '#/definitions/reports.AccountBalance'
+    type: object
+  reports.CategoryYearlyBalance:
+    properties:
+      code:
+        type: string
+      monthly_data:
+        items:
+          type: integer
+        type: array
+      subcategories:
+        items:
+          $ref: '#/definitions/reports.CategoryYearlyBalance'
+        type: array
+    type: object
+  reports.DashboardData:
+    properties:
+      balances:
+        items:
+          $ref: '#/definitions/reports.AccountBalance'
+        type: array
+      month:
+        type: integer
+      recent_transactions:
+        items:
+          $ref: '#/definitions/transaction.TransactionResponseItem'
+        type: array
+      top_expenses:
+        items:
+          $ref: '#/definitions/transaction.TransactionResponseItem'
+        type: array
+      year:
+        type: integer
+      yearly:
+        items:
+          $ref: '#/definitions/reports.CategoryYearlyBalance'
+        type: array
+    type: object
+  reports.DashboardResponse:
+    properties:
+      dashboard:
+        $ref: '#/definitions/reports.DashboardData'
+    type: object
+  reports.YearlyReportResponse:
+    properties:
+      balances:
+        items:
+          $ref: '#/definitions/reports.CategoryYearlyBalance'
+        type: array
+    type: object
+  suggestion.ChangeSuggestionInput:
+    properties:
+      account_code:
+        type: string
+      category_code:
+        type: string
+      description_contains:
+        type: string
+      entry_type:
+        type: string
+      priority:
+        type: integer
+      transfer_account_code:
+        type: string
+    type: object
+  suggestion.CreateSuggestionInput:
+    properties:
+      account_code:
+        type: string
+      category_code:
+        type: string
+      description_contains:
+        type: string
+      entry_type:
+        type: string
+      priority:
+        type: integer
+      transfer_account_code:
+        type: string
+    required:
+    - description_contains
+    - priority
+    type: object
+  suggestion.SuggestionEntryType:
+    enum:
+    - REVENUE
+    - EXPENSE
+    - TRANSFER
+    type: string
+    x-enum-varnames:
+    - SuggestionEntryTypeRevenue
+    - SuggestionEntryTypeExpense
+    - SuggestionEntryTypeTransfer
+  suggestion.SuggestionListResponse:
+    properties:
+      suggestions:
+        items:
+          $ref: '#/definitions/suggestion.SuggestionResponseItem'
+        type: array
+    type: object
+  suggestion.SuggestionResponse:
+    properties:
+      suggestion:
+        $ref: '#/definitions/suggestion.SuggestionResponseItem'
+    type: object
+  suggestion.SuggestionResponseItem:
+    properties:
+      account_code:
+        type: string
+      category_code:
+        type: string
+      created_at:
+        type: string
+      description_contains:
+        type: string
+      entry_type:
+        $ref: '#/definitions/suggestion.SuggestionEntryType'
+      id:
+        type: string
+      priority:
+        type: integer
+      transfer_account_code:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  transaction.ChangeTransactionInput:
+    properties:
+      account_code:
+        type: string
+      account_transfer:
+        type: string
+      amount:
+        type: integer
+      category_code:
+        type: string
+      date:
+        type: string
+      description:
+        type: string
+      is_transfer:
+        type: boolean
+    type: object
+  transaction.CreateSingleTransaction:
+    properties:
+      account_code:
+        type: string
+      account_transfer:
+        type: string
+      amount:
+        type: integer
+      category_code:
+        type: string
+      date:
+        type: string
+      description:
+        type: string
+      is_transfer:
+        type: boolean
+    required:
+    - account_code
+    - amount
+    - category_code
+    - date
+    - description
+    - is_transfer
+    type: object
+  transaction.CreateTransactionInput:
+    properties:
+      transactions:
+        items:
+          $ref: '#/definitions/transaction.CreateSingleTransaction'
+        type: array
+    required:
+    - transactions
+    type: object
+  transaction.CreateTransactionResponse:
+    properties:
+      transactions:
+        items:
+          $ref: '#/definitions/transaction.TransactionResponseItem'
+        type: array
+    type: object
+  transaction.GetTransactionResponse:
+    properties:
+      transaction:
+        $ref: '#/definitions/transaction.TransactionResponseItem'
+    type: object
+  transaction.PaginationInfo:
+    properties:
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  transaction.TransactionResponse:
+    properties:
+      pagination:
+        $ref: '#/definitions/transaction.PaginationInfo'
+      transactions:
+        items:
+          $ref: '#/definitions/transaction.TransactionResponseItem'
+        type: array
+    type: object
+  transaction.TransactionResponseItem:
+    properties:
+      account_code:
+        type: string
+      account_transfer:
+        type: string
+      amount:
+        type: integer
+      category_code:
+        type: string
+      date:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      transfer_id:
+        type: integer
+    type: object
+  user.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  user.LoginResponse:
+    properties:
+      token:
+        type: string
+    type: object
+  user.RegisterRequest:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - name
+    - password
+    type: object
+  user.RegisterResponse:
+    properties:
+      user:
+        $ref: '#/definitions/user.UserResponse'
+    type: object
+  user.UserResponse:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: API for managing accounts, categories, transactions, reports, and suggestions.
+  title: Expense Tracker API
+  version: "1.0"
+paths:
+  /accounts:
+    get:
+      description: Returns all accounts for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/account.AccountListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List accounts
+      tags:
+      - accounts
+    post:
+      consumes:
+      - application/json
+      description: Creates a new account for the authenticated user
+      parameters:
+      - description: Account payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/account.CreateAccountInput'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/account.AccountResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create account
+      tags:
+      - accounts
+  /accounts/{code}:
+    delete:
+      description: Deactivates an account
+      parameters:
+      - description: Account code
+        in: path
+        name: code
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Deactivate account
+      tags:
+      - accounts
+    get:
+      description: Returns an account by its code
+      parameters:
+      - description: Account code
+        in: path
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/account.AccountResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get account by code
+      tags:
+      - accounts
+    patch:
+      consumes:
+      - application/json
+      description: Updates an existing account
+      parameters:
+      - description: Account code
+        in: path
+        name: code
+        required: true
+        type: string
+      - description: Account changes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/account.ChangeAccountInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/account.AccountResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update account
+      tags:
+      - accounts
+  /accounts/reorder:
+    patch:
+      consumes:
+      - application/json
+      description: Reorders active accounts for the authenticated user
+      parameters:
+      - description: Account ordering
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/account.ReorderAccountsInput'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Reorder accounts
+      tags:
+      - accounts
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates a user and returns a JWT token
+      parameters:
+      - description: Login payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/user.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Login user
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user account
+      parameters:
+      - description: Register payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/user.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/user.RegisterResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Register user
+      tags:
+      - auth
+  /categories:
+    get:
+      description: Returns all active categories for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/category.CategoryListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List categories
+      tags:
+      - categories
+    post:
+      consumes:
+      - application/json
+      description: Creates a new category for the authenticated user
+      parameters:
+      - description: Category payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/category.CreateCategoryInput'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/category.CategoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create category
+      tags:
+      - categories
+  /categories/{code}:
+    delete:
+      description: Deactivates a category
+      parameters:
+      - description: Category code
+        in: path
+        name: code
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Deactivate category
+      tags:
+      - categories
+    get:
+      description: Returns a category by its code
+      parameters:
+      - description: Category code
+        in: path
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/category.CategoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get category by code
+      tags:
+      - categories
+    patch:
+      consumes:
+      - application/json
+      description: Updates an existing category
+      parameters:
+      - description: Category code
+        in: path
+        name: code
+        required: true
+        type: string
+      - description: Category changes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/category.ChangeCategoryInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/category.CategoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update category
+      tags:
+      - categories
+  /categories/reorder:
+    patch:
+      consumes:
+      - application/json
+      description: Reorders categories within a parent group
+      parameters:
+      - description: Category ordering
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/category.ReorderCategoriesInput'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Reorder categories
+      tags:
+      - categories
+  /reports/balance:
+    get:
+      description: Returns balances for all accounts
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/reports.AllBalancesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List balances
+      tags:
+      - reports
+  /reports/balance/{code}:
+    get:
+      description: Returns a single account balance
+      parameters:
+      - description: Account code
+        in: path
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/reports.BalanceByCodeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get balance by account code
+      tags:
+      - reports
+  /reports/dashboard:
+    get:
+      description: Returns dashboard data for the selected month and year
+      parameters:
+      - description: Year to filter
+        in: query
+        minimum: 2000
+        name: year
+        type: integer
+      - description: Month to filter
+        in: query
+        maximum: 12
+        minimum: 1
+        name: month
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/reports.DashboardResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get dashboard
+      tags:
+      - reports
+  /reports/yearly:
+    get:
+      description: Returns all balances for the specified year (default current year)
+      parameters:
+      - description: Year to filter
+        in: query
+        minimum: 2000
+        name: year
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/reports.YearlyReportResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get yearly report
+      tags:
+      - reports
+  /suggestions:
+    get:
+      description: Returns all suggestions for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/suggestion.SuggestionListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List suggestions
+      tags:
+      - suggestions
+    post:
+      consumes:
+      - application/json
+      description: Creates a transaction suggestion for the authenticated user
+      parameters:
+      - description: Suggestion payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/suggestion.CreateSuggestionInput'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/suggestion.SuggestionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create suggestion
+      tags:
+      - suggestions
+  /suggestions/{id}:
+    delete:
+      description: Deletes a suggestion
+      parameters:
+      - description: Suggestion ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete suggestion
+      tags:
+      - suggestions
+    get:
+      description: Returns a suggestion by its ID
+      parameters:
+      - description: Suggestion ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/suggestion.SuggestionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get suggestion by ID
+      tags:
+      - suggestions
+    patch:
+      consumes:
+      - application/json
+      description: Updates an existing suggestion
+      parameters:
+      - description: Suggestion ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Suggestion changes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/suggestion.ChangeSuggestionInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/suggestion.SuggestionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update suggestion
+      tags:
+      - suggestions
+  /transactions:
+    get:
+      description: Returns filtered transactions with pagination metadata
+      parameters:
+      - description: Page size
+        in: query
+        maximum: 1000
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Page number
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - description: Sort field, prepend '-' for descending
+        enum:
+        - DATE
+        - AMOUNT
+        - UPDATED
+        - -DATE
+        - -AMOUNT
+        - -UPDATED
+        in: query
+        name: sort
+        type: string
+      - description: Comma-separated account codes
+        in: query
+        name: account_code
+        type: string
+      - description: Comma-separated category codes
+        in: query
+        name: category_code
+        type: string
+      - description: Space- or comma-separated description terms, supports exclusions
+          with '-'
+        in: query
+        name: description
+        type: string
+      - description: Comma-separated operations
+        enum:
+        - REVENUE
+        - EXPENSE
+        - TRANSFER
+        in: query
+        name: operation
+        type: string
+      - description: Minimum absolute amount
+        in: query
+        name: min_amount
+        type: integer
+      - description: Maximum absolute amount
+        in: query
+        name: max_amount
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: from_date
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: to_date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/transaction.TransactionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List transactions
+      tags:
+      - transactions
+    post:
+      consumes:
+      - application/json
+      description: Creates one or more transactions for the authenticated user
+      parameters:
+      - description: Transactions payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/transaction.CreateTransactionInput'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/transaction.CreateTransactionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create transactions
+      tags:
+      - transactions
+  /transactions/{id}:
+    delete:
+      description: Deletes a transaction
+      parameters:
+      - description: Transaction ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete transaction
+      tags:
+      - transactions
+    get:
+      description: Returns a transaction by its ID
+      parameters:
+      - description: Transaction ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/transaction.GetTransactionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get transaction by ID
+      tags:
+      - transactions
+    patch:
+      consumes:
+      - application/json
+      description: Updates an existing transaction
+      parameters:
+      - description: Transaction ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Transaction changes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/transaction.ChangeTransactionInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/transaction.GetTransactionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update transaction
+      tags:
+      - transactions
+securityDefinitions:
+  BearerAuth:
+    description: JWT token using the format "Bearer {token}"
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

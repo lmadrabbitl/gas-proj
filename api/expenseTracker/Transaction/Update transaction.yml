@@ -1,0 +1,22 @@
+info:
+  name: Update transaction
+  type: http
+  seq: 4
+
+http:
+  method: PATCH
+  url: http://localhost:8080/transactions/f060c3c9-d316-4cbb-8852-268dafc4f951
+  body:
+    type: json
+    data: |-
+      {
+        "is_transfer": false,
+        "account_code": "inter"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

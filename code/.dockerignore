@@ -1,0 +1,8 @@
+.git
+.gitignore
+.env
+bkp
+docs/useful_queries.txt
+seed
+resetDB.sh
+.vscode

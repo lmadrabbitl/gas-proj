@@ -1,0 +1,24 @@
+info:
+  name: Update
+  type: http
+  seq: 1
+
+http:
+  method: PATCH
+  url: http://localhost:8080/categories/gasosa
+  body:
+    type: json
+    data: |-
+      { 
+        "name": "gasolina e alcool",
+        "type": "EXPENSE",
+        "description": "gassssssolinaaaa e alcooooolll",
+        "parent_code": "alimentacao"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

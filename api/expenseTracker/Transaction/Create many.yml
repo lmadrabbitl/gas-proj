@@ -1,0 +1,46 @@
+info:
+  name: Create many
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: http://localhost:8080/transactions
+  body:
+    type: json
+    data: |-
+      { 
+      "transactions": [
+        {
+          "date": "2026-01-02T00:00:00Z",
+          "category_code": "salario",
+          "description": "salario2",
+          "amount": 777700,
+          "account_code": "santander",
+          "is_transfer": false
+        },
+        {
+          "date": "2025-12-02T00:00:00Z",
+          "category_code": "mercado",
+          "description": "barbosa",
+          "amount": 12729,
+          "account_code": "ccsantander",
+          "is_transfer": false
+        },
+        {
+          "date": "2026-02-28T00:00:00Z",
+          "category_code": "salario",
+          "description": "transferencia de salario",
+          "amount": 120000,
+          "account_code": "santander",
+          "is_transfer": true,
+          "account_transfer": "inter"
+        }
+      ]}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

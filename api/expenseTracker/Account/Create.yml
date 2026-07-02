@@ -1,0 +1,24 @@
+info:
+  name: Create
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: http://localhost:8080/accounts
+  body:
+    type: json
+    data: |-
+      { 
+      "code": "ccsantander", 
+      "name": "Cartão de crédito Santander",
+      "type": "LIABILITY",
+      "currency": "BRL"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

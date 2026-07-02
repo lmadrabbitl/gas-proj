@@ -1,0 +1,2 @@
+ALTER TABLE accounts
+ADD COLUMN hide_from_dashboard BOOLEAN NOT NULL DEFAULT FALSE;

@@ -1,0 +1,7 @@
+.buildImageAndRunCompose.local
+.DS_Store
+**/.codex
+**/.agents
+.vscode/
+code/.env
+code/tmp/

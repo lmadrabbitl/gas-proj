@@ -1,0 +1,7 @@
+CREATE TABLE user_configs (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  language TEXT NOT NULL DEFAULT 'pt-BR',
+  settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

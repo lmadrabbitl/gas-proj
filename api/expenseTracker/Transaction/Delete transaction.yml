@@ -1,0 +1,15 @@
+info:
+  name: Delete transaction
+  type: http
+  seq: 3
+
+http:
+  method: DELETE
+  url: http://localhost:8080/transactions/222c4439-eb57-49be-86dd-ff3f9ed4b0b2
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
