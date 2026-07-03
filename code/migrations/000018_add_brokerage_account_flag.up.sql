@@ -1,0 +1,2 @@
+ALTER TABLE accounts
+ADD COLUMN is_brokerage_account BOOLEAN NOT NULL DEFAULT FALSE;

@@ -27,17 +27,19 @@ type service struct {
 }
 
 type CreateAccountRequest struct {
-	Name              string
-	Type              AccountType
-	Currency          string
-	HideFromDashboard bool
+	Name               string
+	Type               AccountType
+	Currency           string
+	IsBrokerageAccount bool
+	HideFromDashboard  bool
 }
 
 type UpdateAccountRequest struct {
-	Name              *string
-	Type              *AccountType
-	Currency          *string
-	HideFromDashboard *bool
+	Name               *string
+	Type               *AccountType
+	Currency           *string
+	IsBrokerageAccount *bool
+	HideFromDashboard  *bool
 }
 
 func NewService(repo Repository) Service {
@@ -73,13 +75,14 @@ func (serv *service) AddAccount(userID uuid.UUID, req CreateAccountRequest) (*Ac
 	}
 
 	account := &Account{
-		ID:                uuid.New(),
-		UserID:            userID,
-		Code:              slugutil.GenerateUnique(req.Name, "account", existingCodes),
-		Name:              req.Name,
-		Type:              req.Type,
-		Currency:          req.Currency,
-		HideFromDashboard: req.HideFromDashboard,
+		ID:                 uuid.New(),
+		UserID:             userID,
+		Code:               slugutil.GenerateUnique(req.Name, "account", existingCodes),
+		Name:               req.Name,
+		Type:               req.Type,
+		Currency:           req.Currency,
+		IsBrokerageAccount: req.IsBrokerageAccount,
+		HideFromDashboard:  req.HideFromDashboard,
 	}
 
 	if account.DeactivatedAt == nil && account.SortOrder == nil {
@@ -127,8 +130,8 @@ func (serv *service) GetAccountsByID(userID uuid.UUID, ids []uuid.UUID) ([]Accou
 
 func (serv *service) UpdateAccount(userID uuid.UUID, code string, req UpdateAccountRequest) (*Account, error) {
 
-	if req.Currency == nil && req.Name == nil && req.Type == nil && req.HideFromDashboard == nil {
-		return nil, errors.ErrInvalidInputWithMessage("at least one of these can't be empty: name, currency, type or hide_from_dashboard", nil)
+	if req.Currency == nil && req.Name == nil && req.Type == nil && req.IsBrokerageAccount == nil && req.HideFromDashboard == nil {
+		return nil, errors.ErrInvalidInputWithMessage("at least one of these can't be empty: name, currency, type, is_brokerage_account or hide_from_dashboard", nil)
 	}
 
 	if err := CheckAccountCode(code); err != nil {
@@ -172,6 +175,9 @@ func (serv *service) UpdateAccount(userID uuid.UUID, code string, req UpdateAcco
 			return nil, err
 		}
 		updateAccount.Type = req.Type
+	}
+	if req.IsBrokerageAccount != nil {
+		updateAccount.IsBrokerageAccount = req.IsBrokerageAccount
 	}
 	if req.HideFromDashboard != nil {
 		updateAccount.HideFromDashboard = req.HideFromDashboard

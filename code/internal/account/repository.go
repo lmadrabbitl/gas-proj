@@ -29,10 +29,11 @@ type Repository interface {
 }
 
 type UpdateAccount struct {
-	Name              *string
-	Type              *AccountType
-	Currency          *string
-	HideFromDashboard *bool
+	Name               *string
+	Type               *AccountType
+	Currency           *string
+	IsBrokerageAccount *bool
+	HideFromDashboard  *bool
 }
 
 type repository struct {
@@ -138,6 +139,9 @@ func (repo *repository) Update(userID uuid.UUID, code string, account *UpdateAcc
 	}
 	if account.Type != nil {
 		updates["type"] = *account.Type
+	}
+	if account.IsBrokerageAccount != nil {
+		updates["is_brokerage_account"] = *account.IsBrokerageAccount
 	}
 	if account.HideFromDashboard != nil {
 		updates["hide_from_dashboard"] = *account.HideFromDashboard

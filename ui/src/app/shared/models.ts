@@ -83,6 +83,7 @@ export interface Account {
   Type: AccountType;
   Balance: number;
   Currency: string;
+  is_brokerage_account: boolean;
   hide_from_dashboard: boolean;
   SortOrder?: number | null;
   CreatedAt: string;
@@ -310,6 +311,7 @@ export interface CreateAccountPayload {
   name: string;
   type: AccountType;
   currency: string;
+  is_brokerage_account: boolean;
   hide_from_dashboard: boolean;
 }
 
@@ -317,6 +319,7 @@ export interface UpdateAccountPayload {
   name?: string;
   type?: AccountType;
   currency?: string;
+  is_brokerage_account?: boolean;
   hide_from_dashboard?: boolean;
 }
 

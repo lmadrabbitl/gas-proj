@@ -44,6 +44,7 @@ import { ToastService } from '../../shared/toast.service';
                     <th>{{ messages.columns.sortOrder }}</th>
                     <th>{{ messages.columns.name }}</th>
                     <th>{{ messages.columns.type }}</th>
+                    <th>{{ messages.columns.brokerage }}</th>
                     <th>{{ messages.columns.dashboard }}</th>
                     <th>{{ messages.columns.balance }}</th>
                     <th>{{ messages.columns.currency }}</th>
@@ -74,6 +75,7 @@ import { ToastService } from '../../shared/toast.service';
                       <td>{{ displaySortOrder(account) }}</td>
                       <td>{{ displayAccountName(account) }}</td>
                       <td>{{ accountType(account.Type) }}</td>
+                      <td>{{ brokerageLabel(account) }}</td>
                       <td>{{ dashboardVisibility(account) }}</td>
                       <td>{{ money(account.Balance) }}</td>
                       <td>{{ account.Currency }}</td>
@@ -103,6 +105,7 @@ import { ToastService } from '../../shared/toast.service';
                   <tr>
                     <th>{{ messages.columns.name }}</th>
                     <th>{{ messages.columns.type }}</th>
+                    <th>{{ messages.columns.brokerage }}</th>
                     <th>{{ messages.columns.balance }}</th>
                     <th>{{ messages.columns.currency }}</th>
                     <th>{{ messages.columns.deactivatedAt }}</th>
@@ -114,6 +117,7 @@ import { ToastService } from '../../shared/toast.service';
                     <tr [class.liability-row]="isLiability(account)">
                       <td>{{ displayAccountName(account) }}</td>
                       <td>{{ accountType(account.Type) }}</td>
+                      <td>{{ brokerageLabel(account) }}</td>
                       <td>{{ money(account.Balance) }}</td>
                       <td>{{ account.Currency }}</td>
                       <td>{{ deactivatedLabel(account) }}</td>
@@ -162,6 +166,11 @@ import { ToastService } from '../../shared/toast.service';
             {{ messages.form.currency }}
             <input formControlName="currency" maxlength="3" />
           </label>
+          <label class="checkbox-label">
+            <input type="checkbox" formControlName="is_brokerage_account" />
+            {{ messages.form.isBrokerageAccount }}
+          </label>
+          <p class="section-note checkbox-hint">{{ messages.form.isBrokerageAccountHint }}</p>
           <label class="checkbox-label">
             <input type="checkbox" formControlName="hide_from_dashboard" />
             {{ messages.form.hideFromDashboard }}
@@ -246,6 +255,7 @@ export class AccountsComponent implements OnInit {
     name: this.fb.nonNullable.control('', Validators.required),
     type: this.fb.nonNullable.control<AccountType>('ASSET', Validators.required),
     currency: this.fb.nonNullable.control('BRL', Validators.required),
+    is_brokerage_account: this.fb.nonNullable.control(false),
     hide_from_dashboard: this.fb.nonNullable.control(false),
   });
 
@@ -277,7 +287,7 @@ export class AccountsComponent implements OnInit {
 
   openCreate(): void {
     this.editing.set(null);
-    this.form.reset({ name: '', type: 'ASSET', currency: 'BRL', hide_from_dashboard: false });
+    this.form.reset({ name: '', type: 'ASSET', currency: 'BRL', is_brokerage_account: false, hide_from_dashboard: false });
     this.panelOpen.set(true);
   }
 
@@ -287,6 +297,7 @@ export class AccountsComponent implements OnInit {
       name: account.Name,
       type: account.Type,
       currency: account.Currency,
+      is_brokerage_account: account.is_brokerage_account,
       hide_from_dashboard: account.hide_from_dashboard,
     });
     this.panelOpen.set(true);
@@ -309,12 +320,14 @@ export class AccountsComponent implements OnInit {
           name: value.name,
           type: value.type,
           currency: value.currency.toUpperCase(),
+          is_brokerage_account: value.is_brokerage_account,
           hide_from_dashboard: value.hide_from_dashboard,
         })
       : this.accountsService.create({
           name: value.name,
           type: value.type,
           currency: value.currency.toUpperCase(),
+          is_brokerage_account: value.is_brokerage_account,
           hide_from_dashboard: value.hide_from_dashboard,
         });
 
@@ -389,6 +402,10 @@ export class AccountsComponent implements OnInit {
 
   dashboardVisibility(account: Account): string {
     return account.hide_from_dashboard ? this.messages.dashboard.hidden : this.messages.dashboard.visible;
+  }
+
+  brokerageLabel(account: Account): string {
+    return account.is_brokerage_account ? this.messages.brokerage.yes : this.messages.brokerage.no;
   }
 
   displayAccountName(account: Account): string {

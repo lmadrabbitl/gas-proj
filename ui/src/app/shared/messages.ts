@@ -537,6 +537,7 @@ export const uiMessages = {
       sortOrder: 'Ordem',
       name: 'Nome',
       type: 'Tipo',
+      brokerage: 'Corretora',
       balance: 'Saldo',
       currency: 'Moeda',
       dashboard: 'Painel',
@@ -562,6 +563,9 @@ export const uiMessages = {
       name: 'Nome',
       type: 'Tipo',
       currency: 'Moeda',
+      isBrokerageAccount: 'Conta de corretora',
+      isBrokerageAccountHint:
+        'Marque quando a conta representar o saldo operacional de uma corretora.',
       hideFromDashboard: 'Ocultar do painel',
       hideFromDashboardHint:
         'Use para contas de investimento que não devem entrar no saldo consolidado do dashboard.',
@@ -571,6 +575,10 @@ export const uiMessages = {
     dashboard: {
       visible: 'Visível',
       hidden: 'Oculta',
+    },
+    brokerage: {
+      yes: 'Sim',
+      no: 'Não',
     },
   },
   categories: {
