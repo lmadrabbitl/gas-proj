@@ -1,23 +1,38 @@
 import { Component, DestroyRef, ElementRef, HostListener, OnInit, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { forkJoin, of, switchMap } from 'rxjs';
 
 import { InvestmentsService } from '../../data/investments.service';
+import { ReferenceDataService } from '../../data/reference-data.service';
+import { TransactionsService } from '../../data/transactions.service';
 import { getApiErrorMessage } from '../../shared/api-error';
 import { investmentAssetLabel, investmentAssetTypeLabel, investmentOperationTypeLabel } from '../../shared/labels';
 import { uiMessages } from '../../shared/messages';
 import { MoneyVisibilityService } from '../../shared/money-visibility.service';
 import { brazilianDateToQuery, centsToDecimal, dateInputToIso, decimalToCents, toBrazilianDate, toDateInputValue } from '../../shared/money';
-import { InvestmentAsset, InvestmentAssetType, InvestmentOperation, InvestmentOperationType } from '../../shared/models';
+import { Account, InvestmentAsset, InvestmentAssetType, InvestmentOperation, InvestmentOperationType, Transaction } from '../../shared/models';
 import { ToastService } from '../../shared/toast.service';
 
 type OperationsFilterMenuType = 'asset' | 'operation';
+type MirrorMode = 'create' | 'attach';
+type MirrorCandidate = { id: string; amount: number; label: string };
+type MirrorDraftRow = {
+  operationId: string;
+  assetCode: string;
+  operationType: InvestmentOperationType;
+  quantity: number;
+  date: string;
+  netAmount: number;
+  sourceAccountCode: string;
+  destinationAccountCode: string;
+  transactionId: string;
+};
 
 @Component({
   selector: 'app-investment-operations',
-  imports: [ReactiveFormsModule, RouterLink, RouterLinkActive],
+  imports: [FormsModule, ReactiveFormsModule, RouterLink, RouterLinkActive],
   template: `
     <section class="page-header">
       <div>
@@ -104,9 +119,32 @@ type OperationsFilterMenuType = 'asset' | 'operation';
       } @else if (filteredOperations().length === 0) {
         <p class="state-message">{{ messages.filteredEmpty }}</p>
       } @else {
+        @if (selectedCount() > 0 && !panelOpen() && !mirrorModalOpen()) {
+          <div class="operations-bulk-bar">
+            <div class="operations-bulk-left">
+              <button class="ghost-button bulk-icon-button" type="button" (click)="toggleSelectAllFiltered()">
+                {{ allFilteredSelected() ? 'Limpar' : 'Tudo' }}
+              </button>
+              <span class="bulk-actions-count">{{ selectedCountLabel() }}</span>
+            </div>
+            <button class="primary-button bulk-icon-button operations-link-button" type="button" (click)="openMirrorSelection()">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path
+                  d="M10.5 13.5 8 16a3 3 0 1 1-4.24-4.24l3-3A3 3 0 0 1 11 8m2 8a3 3 0 0 0 4.24 0l3-3A3 3 0 1 0 16 8l-2.5 2.5m-3 3h3"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.8"
+                />
+              </svg>
+            </button>
+          </div>
+        }
         <div class="table-wrap">
           <table class="operations-table">
             <colgroup>
+              <col class="operations-col-select" />
               <col class="operations-col-date" />
               <col class="operations-col-asset" />
               <col class="operations-col-type" />
@@ -118,6 +156,7 @@ type OperationsFilterMenuType = 'asset' | 'operation';
             </colgroup>
             <thead>
               <tr>
+                <th class="selection-column">{{ messages.columns.select }}</th>
                 <th>{{ messages.columns.date }}</th>
                 <th>{{ messages.columns.asset }}</th>
                 <th>{{ messages.columns.type }}</th>
@@ -130,7 +169,16 @@ type OperationsFilterMenuType = 'asset' | 'operation';
             </thead>
             <tbody>
               @for (operation of filteredOperations(); track operation.id) {
-                <tr>
+                <tr [class.operations-selected-row]="isOperationSelected(operation.id)" (click)="toggleOperationSelection(operation)">
+                  <td class="selection-cell">
+                    <input
+                      type="checkbox"
+                      [checked]="isOperationSelected(operation.id)"
+                      [disabled]="!canSelectOperation(operation)"
+                      (click)="$event.stopPropagation()"
+                      (change)="$event.stopPropagation(); toggleOperationSelection(operation)"
+                    />
+                  </td>
                   <td>{{ brazilianDate(operation.date) }}</td>
                   <td>{{ operation.asset_code }}</td>
                   <td>{{ operationType(operation.operation_type) }}</td>
@@ -145,10 +193,11 @@ type OperationsFilterMenuType = 'asset' | 'operation';
                         type="button"
                         [attr.title]="notesTooltip(operation)"
                         [attr.aria-label]="notesTooltip(operation)"
+                        (click)="$event.stopPropagation()"
                       >
                         i
                       </button>
-                      <button class="icon-action" type="button" [title]="messages.actions.edit" [attr.aria-label]="messages.actions.edit" (click)="openEdit(operation)">
+                      <button class="icon-action" type="button" [title]="messages.actions.edit" [attr.aria-label]="messages.actions.edit" (click)="$event.stopPropagation(); openEdit(operation)">
                         <svg aria-hidden="true" viewBox="0 0 24 24">
                           <path
                             d="M4 20h4.5L19 9.5a1.5 1.5 0 0 0 0-2.12l-2.38-2.38A1.5 1.5 0 0 0 14.5 5L4 15.5V20Zm0 0 4.5-4.5M12.5 7.5l4 4"
@@ -160,7 +209,26 @@ type OperationsFilterMenuType = 'asset' | 'operation';
                           />
                         </svg>
                       </button>
-                      <button class="icon-action danger" type="button" [title]="messages.actions.remove" [attr.aria-label]="messages.actions.remove" (click)="remove(operation)">
+                      <button
+                        class="icon-action"
+                        type="button"
+                        [disabled]="operation.has_linked_mirror || operation.operation_type === 'BONIFICATION'"
+                        [title]="operation.has_linked_mirror ? messages.actions.mirrorLinked : messages.actions.mirror"
+                        [attr.aria-label]="messages.actions.mirror"
+                        (click)="$event.stopPropagation(); openMirror(operation)"
+                      >
+                        <svg aria-hidden="true" viewBox="0 0 24 24">
+                          <path
+                            d="M10.5 13.5 8 16a3 3 0 1 1-4.24-4.24l3-3A3 3 0 0 1 11 8m2 8a3 3 0 0 0 4.24 0l3-3A3 3 0 1 0 16 8l-2.5 2.5m-3 3h3"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="1.8"
+                          />
+                        </svg>
+                      </button>
+                      <button class="icon-action danger" type="button" [title]="messages.actions.remove" [attr.aria-label]="messages.actions.remove" (click)="$event.stopPropagation(); remove(operation)">
                         <svg aria-hidden="true" viewBox="0 0 24 24">
                           <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-1 6h2v10H8V9Zm6 0h2v10h-2V9Zm-9 0h14l-1 12H6L5 9Z"/>
                         </svg>
@@ -251,6 +319,112 @@ type OperationsFilterMenuType = 'asset' | 'operation';
           </button>
         </form>
       </aside>
+    }
+
+    @if (mirrorModalOpen()) {
+      <div class="modal-backdrop" (click)="closeMirrorModal()">
+        <section class="panel mirror-modal" (click)="$event.stopPropagation()">
+          <div class="panel-header">
+            <div>
+              <h2>{{ messages.mirror.title }}</h2>
+              <p class="page-subtitle">{{ messages.mirror.subtitle }}</p>
+            </div>
+            <button class="ghost-button" type="button" (click)="closeMirrorModal()">{{ messages.actions.close }}</button>
+          </div>
+
+          <div class="mirror-mode-switch">
+            <label class="checkbox-label">
+              <input type="radio" name="mirror-mode" [checked]="mirrorMode() === 'create'" (change)="mirrorMode.set('create')" />
+              <span>{{ messages.mirror.createMode }}</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="radio" name="mirror-mode" [checked]="mirrorMode() === 'attach'" (change)="mirrorMode.set('attach')" />
+              <span>{{ messages.mirror.attachMode }}</span>
+            </label>
+          </div>
+
+          @if (mirrorMode() === 'create') {
+            <div class="mirror-table-wrap">
+              <table class="mirror-table">
+                <thead>
+                  <tr>
+                    <th>Ticker</th>
+                    <th>Operação</th>
+                    <th>Quantidade</th>
+                    <th>Valor</th>
+                    <th>{{ messages.mirror.source }}</th>
+                    <th>{{ messages.mirror.destination }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (row of mirrorRows(); track row.operationId; let index = $index) {
+                    <tr>
+                      <td>{{ row.assetCode }}</td>
+                      <td>{{ row.operationType === 'BUY' ? 'Compra' : row.operationType === 'SELL' ? 'Venda' : row.operationType }}</td>
+                      <td>{{ row.quantity }}</td>
+                      <td>{{ money(row.netAmount) }}</td>
+                      <td>
+                        <select [ngModel]="row.sourceAccountCode" (ngModelChange)="updateMirrorSource(index, $any($event))">
+                          <option value=""></option>
+                          @for (account of activeAccounts(); track account.Code) {
+                            <option [value]="account.Code">{{ account.Name }}</option>
+                          }
+                        </select>
+                      </td>
+                      <td>
+                        <select [ngModel]="row.destinationAccountCode" (ngModelChange)="updateMirrorDestination(index, $any($event))">
+                          <option value=""></option>
+                          @for (account of activeAccounts(); track account.Code) {
+                            <option [value]="account.Code">{{ account.Name }}</option>
+                          }
+                        </select>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          } @else {
+            <div class="mirror-table-wrap">
+              <table class="mirror-table">
+                <thead>
+                  <tr>
+                    <th>Ticker</th>
+                    <th>Operação</th>
+                    <th>Quantidade</th>
+                    <th>Valor</th>
+                    <th>{{ messages.mirror.existingTransaction }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (row of mirrorRows(); track row.operationId; let index = $index) {
+                    <tr>
+                      <td>{{ row.assetCode }}</td>
+                      <td>{{ row.operationType === 'BUY' ? 'Compra' : row.operationType === 'SELL' ? 'Venda' : row.operationType }}</td>
+                      <td>{{ row.quantity }}</td>
+                      <td>{{ money(row.netAmount) }}</td>
+                      <td>
+                        <select [ngModel]="row.transactionId" (ngModelChange)="updateMirrorTransaction(index, $any($event))">
+                          <option value=""></option>
+                          @for (candidate of mirrorCandidates(); track candidate.id) {
+                            <option [value]="candidate.id">{{ candidate.label }}</option>
+                          }
+                        </select>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+
+          <div class="insert-actions">
+            <button class="primary-button" type="button" [disabled]="mirrorSaving() || !canSubmitMirror()" (click)="submitMirror()">
+              {{ mirrorSaving() ? messages.actions.saving : messages.mirror.save }}
+            </button>
+          </div>
+        </section>
+      </div>
     }
   `,
   styles: [`
@@ -401,8 +575,32 @@ type OperationsFilterMenuType = 'asset' | 'operation';
       white-space: nowrap;
     }
 
+    .operations-col-select {
+      width: 52px;
+    }
+
+    .selection-column,
+    .selection-cell {
+      text-align: center;
+      width: 52px;
+    }
+
+    .selection-cell input {
+      width: auto;
+      margin: 0;
+      box-shadow: none;
+    }
+
+    .operations-selected-row td {
+      background: color-mix(in srgb, var(--accent-soft) 72%, white 28%);
+    }
+
     .operations-table tbody tr:nth-child(even) td {
       background: var(--surface-soft);
+    }
+
+    .operations-selected-row:nth-child(even) td {
+      background: color-mix(in srgb, var(--accent-soft) 72%, white 28%);
     }
 
     .operations-col-date {
@@ -463,6 +661,165 @@ type OperationsFilterMenuType = 'asset' | 'operation';
     .operations-actions .icon-action {
       margin-left: 0;
     }
+
+    .operations-bulk-bar {
+      align-items: center;
+      backdrop-filter: blur(10px);
+      background: color-mix(in srgb, var(--surface) 86%, white 14%);
+      border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
+      border-radius: 999px;
+      box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
+      display: flex;
+      gap: 12px;
+      inset: auto 18px 18px auto;
+      justify-content: space-between;
+      max-width: min(420px, calc(100vw - 36px));
+      padding: 8px 10px;
+      position: fixed;
+      z-index: 30;
+    }
+
+    .operations-bulk-left {
+      align-items: center;
+      display: flex;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .bulk-actions-count {
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 700;
+      min-width: 0;
+    }
+
+    .bulk-icon-button {
+      min-width: 40px;
+      padding: 0 12px;
+    }
+
+    .operations-link-button {
+      width: 40px;
+      padding: 0;
+    }
+
+    .operations-link-button svg {
+      fill: none;
+      height: 18px;
+      stroke: currentColor;
+      width: 18px;
+    }
+
+    .modal-backdrop {
+      align-items: center;
+      background: rgba(15, 23, 42, 0.42);
+      display: flex;
+      inset: 0;
+      justify-content: center;
+      padding: 24px;
+      position: fixed;
+      z-index: 40;
+    }
+
+    .mirror-modal {
+      background: color-mix(in srgb, var(--surface-strong) 96%, white 4%);
+      border: 1px solid color-mix(in srgb, var(--border) 82%, rgba(15, 23, 42, 0.08));
+      border-radius: 22px;
+      box-shadow: 0 28px 72px rgba(15, 23, 42, 0.26);
+      display: grid;
+      gap: 16px;
+      max-width: min(1100px, 100%);
+      padding: 20px;
+      width: 100%;
+    }
+
+    .mirror-mode-switch {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+
+    .mirror-table-wrap {
+      max-height: min(58vh, 620px);
+      overflow: auto;
+    }
+
+    .mirror-table {
+      table-layout: fixed;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+
+    .mirror-table th,
+    .mirror-table td {
+      white-space: nowrap;
+    }
+
+    .mirror-table th {
+      font-size: 0.78rem;
+      padding: 8px 10px;
+    }
+
+    .mirror-table td {
+      padding: 8px 10px;
+      vertical-align: middle;
+    }
+
+    .mirror-table select {
+      font-size: 0.88rem;
+      min-height: 38px;
+      min-width: 0;
+      padding: 8px 10px;
+      width: 100%;
+    }
+
+    .mirror-table th:nth-child(1),
+    .mirror-table td:nth-child(1) {
+      width: 84px;
+    }
+
+    .mirror-table th:nth-child(2),
+    .mirror-table td:nth-child(2) {
+      width: 110px;
+    }
+
+    .mirror-table th:nth-child(3),
+    .mirror-table td:nth-child(3) {
+      width: 96px;
+      text-align: right;
+    }
+
+    .mirror-table th:nth-child(4),
+    .mirror-table td:nth-child(4) {
+      width: 120px;
+      text-align: right;
+    }
+
+    @media (max-width: 900px) {
+      .mirror-modal {
+        max-width: min(92vw, 100%);
+        padding: 16px;
+      }
+
+      .mirror-table {
+        font-size: 0.86rem;
+      }
+
+      .mirror-table th,
+      .mirror-table td {
+        padding: 7px 8px;
+      }
+
+      .mirror-table th:nth-child(2),
+      .mirror-table td:nth-child(2) {
+        width: 96px;
+      }
+
+      .mirror-table th:nth-child(3),
+      .mirror-table td:nth-child(3) {
+        width: 82px;
+      }
+    }
   `],
 })
 export class InvestmentOperationsComponent implements OnInit {
@@ -474,12 +831,19 @@ export class InvestmentOperationsComponent implements OnInit {
   readonly messages = uiMessages.investments.operations;
   readonly loading = signal(true);
   readonly saving = signal(false);
+  readonly mirrorSaving = signal(false);
   readonly panelOpen = signal(false);
+  readonly mirrorModalOpen = signal(false);
   readonly assetCreateMode = signal(false);
   readonly assetMenuOpen = signal(false);
   readonly operationMenuOpen = signal(false);
+  readonly selectedOperationIds = signal<string[]>([]);
   readonly operations = signal<InvestmentOperation[]>([]);
   readonly assets = signal<InvestmentAsset[]>([]);
+  readonly activeAccounts = signal<Account[]>([]);
+  readonly mirrorCandidates = signal<MirrorCandidate[]>([]);
+  readonly mirrorMode = signal<MirrorMode>('create');
+  readonly mirrorRows = signal<MirrorDraftRow[]>([]);
   readonly editing = signal<InvestmentOperation | null>(null);
   readonly activeAssets = computed(() => this.assets().filter((asset) => asset.is_active));
   readonly operationFilterOptions: InvestmentOperationType[] = ['BUY', 'SELL', 'BONIFICATION'];
@@ -517,6 +881,15 @@ export class InvestmentOperationsComponent implements OnInit {
       return true;
     });
   });
+  readonly selectedOperations = computed(() => {
+    const selectedIds = new Set(this.selectedOperationIds());
+    return this.filteredOperations().filter((operation) => selectedIds.has(operation.id));
+  });
+  readonly selectedCount = computed(() => this.selectedOperations().length);
+  readonly allFilteredSelected = computed(() => {
+    const selectable = this.filteredOperations().filter((operation) => this.canSelectOperation(operation));
+    return selectable.length > 0 && selectable.every((operation) => this.selectedOperationIds().includes(operation.id));
+  });
   readonly filters = this.fb.nonNullable.group({
     asset_codes: this.fb.nonNullable.control<string[]>([]),
     operation_types: this.fb.nonNullable.control<InvestmentOperationType[]>([]),
@@ -538,6 +911,8 @@ export class InvestmentOperationsComponent implements OnInit {
 
   constructor(
     private readonly investmentsService: InvestmentsService,
+    private readonly transactionsService: TransactionsService,
+    private readonly referenceData: ReferenceDataService,
     private readonly toast: ToastService,
   ) {
     this.filters.valueChanges
@@ -586,10 +961,13 @@ export class InvestmentOperationsComponent implements OnInit {
     forkJoin({
       operations: this.investmentsService.listOperations(),
       assets: this.investmentsService.listAssets(),
+      referenceData: this.referenceData.load(),
     }).subscribe({
       next: ({ operations, assets }) => {
         this.operations.set(operations);
+        this.selectedOperationIds.set([]);
         this.assets.set(assets);
+        this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
         this.loading.set(false);
       },
       error: (error) => {
@@ -626,7 +1004,7 @@ export class InvestmentOperationsComponent implements OnInit {
       operation_type: operation.operation_type,
       quantity: operation.quantity,
       unit_price: this.moneyInputValue(operation.unit_price),
-      fee_amount: this.moneyInputValue(operation.fee_amount),
+      fee_amount: this.moneyInputValue(operation.original_total_fee_amount),
       date: toDateInputValue(operation.date),
       notes: operation.notes ?? '',
       new_asset_code: '',
@@ -716,8 +1094,210 @@ export class InvestmentOperationsComponent implements OnInit {
     });
   }
 
+  openMirror(operation: InvestmentOperation): void {
+    if (operation.has_linked_mirror || operation.operation_type === 'BONIFICATION') {
+      return;
+    }
+    this.openMirrorForOperations([operation]);
+  }
+
+  openMirrorSelection(): void {
+    const selected = this.selectedOperations();
+    if (selected.length === 0) {
+      return;
+    }
+    const eligible = selected.filter((operation) => !operation.has_linked_mirror && operation.operation_type !== 'BONIFICATION');
+    if (eligible.length === 0) {
+      this.toast.error('Selecione pelo menos uma operação ainda não vinculada e que não seja bonificação.');
+      return;
+    }
+    if (eligible.length !== selected.length) {
+      this.toast.error('Algumas operações selecionadas já estão vinculadas ou são bonificações e não entrarão neste vínculo em lote.');
+    }
+    this.openMirrorForOperations(eligible);
+  }
+
+  private openMirrorForOperations(operations: InvestmentOperation[]): void {
+    this.mirrorMode.set('create');
+    this.mirrorRows.set(operations.map((operation) => ({
+      operationId: operation.id,
+      assetCode: operation.asset_code,
+      operationType: operation.operation_type,
+      quantity: operation.quantity,
+      date: operation.date,
+      netAmount: Math.abs(operation.net_amount),
+      sourceAccountCode: '',
+      destinationAccountCode: '',
+      transactionId: '',
+    })));
+    this.mirrorCandidates.set([]);
+    this.mirrorModalOpen.set(true);
+
+    this.transactionsService.list({ operation: 'transfer', limit: 1000 }).subscribe({
+      next: (response) => {
+        const candidates = (response.transactions ?? [])
+          .filter((tx) => Boolean(tx.transfer_id) && tx.account_transfer && !tx.is_investment_operation_mirror)
+          .map((tx) => ({
+            id: tx.id,
+            amount: Math.abs(tx.amount),
+            label: `${toBrazilianDate(tx.date)} · ${tx.description} · ${this.referenceData.accountName(tx.account_code)} -> ${this.referenceData.accountName(tx.account_transfer)} · ${this.money(tx.amount)}`,
+          }));
+        this.mirrorCandidates.set(candidates);
+      },
+      error: (error) => this.toast.error(getApiErrorMessage(error)),
+    });
+  }
+
+  closeMirrorModal(): void {
+    if (this.mirrorSaving()) {
+      return;
+    }
+    this.mirrorModalOpen.set(false);
+    this.mirrorRows.set([]);
+  }
+
+  canSubmitMirror(): boolean {
+    if (this.mirrorRows().length === 0) {
+      return false;
+    }
+    if (this.mirrorMode() === 'attach') {
+      return this.mirrorRows().every((row) => row.transactionId.trim().length > 0);
+    }
+    return this.mirrorRows().every((row) =>
+      row.sourceAccountCode.trim().length > 0
+      && row.destinationAccountCode.trim().length > 0
+      && row.sourceAccountCode !== row.destinationAccountCode,
+    );
+  }
+
+  submitMirror(): void {
+    const rows = this.mirrorRows();
+    if (rows.length === 0 || !this.canSubmitMirror()) {
+      return;
+    }
+    if (this.mirrorMode() === 'attach') {
+      const mismatches = rows
+        .map((row) => {
+          const candidate = this.mirrorCandidates().find((item) => item.id === row.transactionId);
+          if (!candidate || candidate.amount === row.netAmount) {
+            return null;
+          }
+          return `${row.assetCode}: ${this.money(candidate.amount)} -> ${this.money(row.netAmount)}`;
+        })
+        .filter((item): item is string => Boolean(item));
+      if (mismatches.length > 0) {
+        const shouldContinue = window.confirm(
+          `As transferências selecionadas terão seus valores ajustados para seguir as operações:\n\n${mismatches.join('\n')}\n\nDeseja continuar?`,
+        );
+        if (!shouldContinue) {
+          return;
+        }
+      }
+    }
+
+    this.mirrorSaving.set(true);
+    const request = {
+      items: rows.map((row) => this.mirrorMode() === 'attach'
+        ? {
+            operation_id: row.operationId,
+            transaction_id: row.transactionId,
+          }
+        : {
+            operation_id: row.operationId,
+            source_account_code: row.sourceAccountCode,
+            destination_account_code: row.destinationAccountCode,
+          }),
+    };
+
+    this.investmentsService.createOperationMirrorsBulk(request).subscribe({
+      next: () => {
+        this.mirrorSaving.set(false);
+        this.toast.success('Transferência vinculada.');
+        this.closeMirrorModal();
+        this.selectedOperationIds.set([]);
+        this.referenceData.reload().subscribe({
+          next: () => {
+            this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
+          },
+          error: (error) => this.toast.error(getApiErrorMessage(error)),
+        });
+        this.load();
+      },
+      error: (error) => {
+        this.toast.error(getApiErrorMessage(error));
+        this.mirrorSaving.set(false);
+      },
+      complete: () => this.mirrorSaving.set(false),
+    });
+  }
+
   operationType(type: InvestmentOperationType): string {
     return investmentOperationTypeLabel(type);
+  }
+
+  canSelectOperation(operation: InvestmentOperation): boolean {
+    return true;
+  }
+
+  isOperationSelected(operationId: string): boolean {
+    return this.selectedOperationIds().includes(operationId);
+  }
+
+  toggleOperationSelection(operation: InvestmentOperation): void {
+    this.selectedOperationIds.update((current) =>
+      current.includes(operation.id)
+        ? current.filter((item) => item !== operation.id)
+        : [...current, operation.id],
+    );
+  }
+
+  toggleSelectAllFiltered(): void {
+    const selectableIds = this.filteredOperations()
+      .map((operation) => operation.id);
+    if (selectableIds.length === 0) {
+      return;
+    }
+    this.selectedOperationIds.set(this.allFilteredSelected() ? [] : selectableIds);
+  }
+
+  selectedCountLabel(): string {
+    const count = this.selectedCount();
+    return `${count} ${count === 1 ? 'operação selecionada' : 'operações selecionadas'}`;
+  }
+
+  updateMirrorSource(index: number, accountCode: string): void {
+    const trimmed = `${accountCode ?? ''}`.trim();
+    const shouldApplyToRemaining = index === 0 && this.mirrorRows()[0]?.sourceAccountCode.trim().length === 0 && trimmed.length > 0;
+    this.mirrorRows.update((rows) => rows.map((row, rowIndex) => {
+      if (rowIndex === index) {
+        return { ...row, sourceAccountCode: trimmed };
+      }
+      if (shouldApplyToRemaining && row.sourceAccountCode.trim().length === 0) {
+        return { ...row, sourceAccountCode: trimmed };
+      }
+      return row;
+    }));
+  }
+
+  updateMirrorDestination(index: number, accountCode: string): void {
+    const trimmed = `${accountCode ?? ''}`.trim();
+    const shouldApplyToRemaining = index === 0 && this.mirrorRows()[0]?.destinationAccountCode.trim().length === 0 && trimmed.length > 0;
+    this.mirrorRows.update((rows) => rows.map((row, rowIndex) => {
+      if (rowIndex === index) {
+        return { ...row, destinationAccountCode: trimmed };
+      }
+      if (shouldApplyToRemaining && row.destinationAccountCode.trim().length === 0) {
+        return { ...row, destinationAccountCode: trimmed };
+      }
+      return row;
+    }));
+  }
+
+  updateMirrorTransaction(index: number, transactionId: string): void {
+    const trimmed = `${transactionId ?? ''}`.trim();
+    this.mirrorRows.update((rows) => rows.map((row, rowIndex) =>
+      rowIndex === index ? { ...row, transactionId: trimmed } : row,
+    ));
   }
 
   toggleFilterMenu(type: OperationsFilterMenuType): void {

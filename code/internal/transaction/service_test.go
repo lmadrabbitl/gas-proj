@@ -22,6 +22,7 @@ type transactionRepoStub struct {
 	deleteFn                  func(db *gorm.DB, userID, transactionID uuid.UUID) error
 	getNextTransferIDFn       func(db *gorm.DB) (int64, error)
 	calculateAccountBalanceFn func(db *gorm.DB, userID uuid.UUID, accCode string) (int64, error)
+	listVisibleByCategoryIDsFn func(userID uuid.UUID, categoryIDs []uuid.UUID) ([]TransactionCategoryMatchRow, error)
 }
 
 func (s *transactionRepoStub) CreateSingle(db *gorm.DB, userID uuid.UUID, transaction *Transaction) (*TransactionResponseItem, error) {
@@ -47,6 +48,9 @@ func (s *transactionRepoStub) GetByIDs(db *gorm.DB, userID uuid.UUID, transactio
 }
 
 func (s *transactionRepoStub) GetDTOByID(db *gorm.DB, userID, transactionID uuid.UUID) (*TransactionResponseItem, error) {
+	if s.getDTOByIDFn == nil {
+		return &TransactionResponseItem{ID: transactionID}, nil
+	}
 	return s.getDTOByIDFn(db, userID, transactionID)
 }
 
@@ -85,6 +89,13 @@ func (s *transactionRepoStub) GetNextTransferID(db *gorm.DB) (int64, error) {
 
 func (s *transactionRepoStub) CalculateAccountBalance(db *gorm.DB, userID uuid.UUID, accCode string) (int64, error) {
 	return s.calculateAccountBalanceFn(db, userID, accCode)
+}
+
+func (s *transactionRepoStub) ListVisibleByCategoryIDs(userID uuid.UUID, categoryIDs []uuid.UUID) ([]TransactionCategoryMatchRow, error) {
+	if s.listVisibleByCategoryIDsFn == nil {
+		return []TransactionCategoryMatchRow{}, nil
+	}
+	return s.listVisibleByCategoryIDsFn(userID, categoryIDs)
 }
 
 type transactionAccountServiceStub struct {

@@ -31,7 +31,10 @@ type serviceStub struct {
 	reorderAssetsFn      func(userID uuid.UUID, portfolioCode string, assetCodes []string) error
 	createOpFn           func(userID uuid.UUID, req CreateOperationRequest) (*OperationRow, error)
 	createBulkOpsFn      func(userID uuid.UUID, req CreateBulkOperationsRequest) ([]OperationRow, error)
+	importOpsFn          func(userID uuid.UUID, req ImportOperationsRequest) (*ImportOperationsResponse, error)
 	listOpsFn            func(userID uuid.UUID) ([]OperationRow, error)
+	createMirrorFn       func(userID, operationID uuid.UUID, req CreateOperationMirrorRequest) (*OperationRow, error)
+	createMirrorsBulkFn  func(userID uuid.UUID, req CreateOperationMirrorsBulkRequest) ([]OperationRow, error)
 	updateOpFn           func(userID uuid.UUID, operationID uuid.UUID, req UpdateOperationRequest) (*OperationRow, error)
 	deleteOpFn           func(userID uuid.UUID, operationID uuid.UUID) error
 	listPositionsFn      func(userID uuid.UUID) ([]PositionRow, error)
@@ -84,8 +87,17 @@ func (s *serviceStub) CreateOperation(userID uuid.UUID, req CreateOperationReque
 func (s *serviceStub) CreateOperationsBulk(userID uuid.UUID, req CreateBulkOperationsRequest) ([]OperationRow, error) {
 	return s.createBulkOpsFn(userID, req)
 }
+func (s *serviceStub) ImportOperations(userID uuid.UUID, req ImportOperationsRequest) (*ImportOperationsResponse, error) {
+	return s.importOpsFn(userID, req)
+}
 func (s *serviceStub) ListOperations(userID uuid.UUID) ([]OperationRow, error) {
 	return s.listOpsFn(userID)
+}
+func (s *serviceStub) CreateOperationMirror(userID, operationID uuid.UUID, req CreateOperationMirrorRequest) (*OperationRow, error) {
+	return s.createMirrorFn(userID, operationID, req)
+}
+func (s *serviceStub) CreateOperationMirrorsBulk(userID uuid.UUID, req CreateOperationMirrorsBulkRequest) ([]OperationRow, error) {
+	return s.createMirrorsBulkFn(userID, req)
 }
 func (s *serviceStub) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req UpdateOperationRequest) (*OperationRow, error) {
 	return s.updateOpFn(userID, operationID, req)

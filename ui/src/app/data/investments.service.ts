@@ -5,8 +5,12 @@ import { map } from 'rxjs';
 import {
   CreateBulkInvestmentOperationPayload,
   CreateInvestmentAssetPayload,
+  CreateInvestmentOperationMirrorPayload,
+  CreateInvestmentOperationMirrorsBulkPayload,
   CreateInvestmentOperationPayload,
   CreateInvestmentPortfolioPayload,
+  ImportInvestmentOperationsPayload,
+  ImportInvestmentOperationsResponse,
   InvestmentAsset,
   InvestmentOperation,
   InvestmentPortfolio,
@@ -120,6 +124,10 @@ export class InvestmentsService {
       .pipe(map((res) => res.operations ?? []));
   }
 
+  importOperations(payload: ImportInvestmentOperationsPayload) {
+    return this.http.post<ImportInvestmentOperationsResponse>('/api/investments/import-operations', payload);
+  }
+
   updateOperation(id: string, payload: UpdateInvestmentOperationPayload) {
     return this.http
       .patch<{ operation: InvestmentOperation }>(`/api/investments/operations/${id}`, payload)
@@ -128,6 +136,18 @@ export class InvestmentsService {
 
   deleteOperation(id: string) {
     return this.http.delete<void>(`/api/investments/operations/${id}`);
+  }
+
+  createOperationMirror(id: string, payload: CreateInvestmentOperationMirrorPayload) {
+    return this.http
+      .post<{ operation: InvestmentOperation }>(`/api/investments/operations/${id}/mirror`, payload)
+      .pipe(map((res) => res.operation));
+  }
+
+  createOperationMirrorsBulk(payload: CreateInvestmentOperationMirrorsBulkPayload) {
+    return this.http
+      .post<{ operations: InvestmentOperation[] }>('/api/investments/operations/mirror-bulk', payload)
+      .pipe(map((res) => res.operations ?? []));
   }
 
   listPositions() {

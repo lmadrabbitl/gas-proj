@@ -26,12 +26,16 @@ type Service interface {
 type service struct {
 	secretkey []byte
 	repo      Repository
+	db        *gorm.DB
+	bootstrap Bootstrapper
 }
 
-func NewService(secret string, repo Repository) Service {
+func NewService(secret string, repo Repository, db *gorm.DB, bootstrap Bootstrapper) Service {
 	return &service{
 		secretkey: []byte(secret),
 		repo:      repo,
+		db:        db,
+		bootstrap: bootstrap,
 	}
 }
 
@@ -133,14 +137,27 @@ func (s *service) CreateUser(name, email, password string) (*User, error) {
 		PasswordHash: passwordHash,
 	}
 
+	if s.db != nil && s.bootstrap != nil {
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			created, createErr := s.repo.CreateUserWithDB(tx, user)
+			if createErr != nil {
+				return createErr
+			}
+			user = created
+			return s.bootstrap.Bootstrap(tx, user.ID)
+		})
+		if err != nil {
+			return nil, err
+		}
+		return user, nil
+	}
+
 	user, err = s.repo.CreateUser(user)
 	if err != nil {
 		return nil, err
 	}
-
 	return user, nil
 }
-
 func getPasswordHash(password string) (string, error) {
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)

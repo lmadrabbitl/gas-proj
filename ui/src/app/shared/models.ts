@@ -124,11 +124,13 @@ export interface InvestmentOperation {
   asset_code: string;
   asset_name: string;
   asset_type: InvestmentAssetType;
+  has_linked_mirror?: boolean;
   operation_type: InvestmentOperationType;
   date: string;
   quantity: number;
   unit_price: number;
   fee_amount: number;
+  original_total_fee_amount: number;
   gross_amount: number;
   net_amount: number;
   notes: string;
@@ -260,6 +262,9 @@ export interface Transaction {
   transfer_id?: number | null;
   account_transfer?: string | null;
   exclude_from_dashboard?: boolean;
+  is_investment_operation_mirror?: boolean;
+  investment_operation_id?: string | null;
+  investment_operation_link_role?: string | null;
 }
 
 export interface Pagination {
@@ -381,6 +386,31 @@ export interface CreateBulkInvestmentOperationPayload {
   }>;
 }
 
+export interface ImportInvestmentOperationsPayload {
+  operations: Array<{
+    client_row_id: string;
+    asset_code: string;
+    operation_type: InvestmentOperationType;
+    date: string;
+    quantity: number;
+    unit_price: number;
+    total_fee_amount: number;
+    notes: string;
+  }>;
+  create_mirrored_transactions: boolean;
+  mirrored_transactions: Array<{
+    client_row_id: string;
+    source_account_code: string;
+    destination_account_code: string;
+  }>;
+}
+
+export interface ImportInvestmentOperationsResponse {
+  operations: InvestmentOperation[];
+  mirroring_enabled: boolean;
+  mirrored_transactions_created: number;
+}
+
 export interface UpdateInvestmentOperationPayload {
   asset_code?: string;
   operation_type?: InvestmentOperationType;
@@ -389,6 +419,21 @@ export interface UpdateInvestmentOperationPayload {
   unit_price?: number;
   fee_amount?: number;
   notes?: string;
+}
+
+export interface CreateInvestmentOperationMirrorPayload {
+  source_account_code?: string;
+  destination_account_code?: string;
+  transaction_id?: string | null;
+}
+
+export interface CreateInvestmentOperationMirrorsBulkPayload {
+  items: Array<{
+    operation_id: string;
+    source_account_code?: string;
+    destination_account_code?: string;
+    transaction_id?: string | null;
+  }>;
 }
 
 export interface TransactionPayload {

@@ -21,6 +21,7 @@ import (
 const (
 	investmentQuoteCacheTTL          = 30 * time.Minute
 	maxSuggestedInvestmentSearchStep = int64(1_000_000_00)
+	investmentMirrorCategoryCode     = "aporteretirada"
 )
 
 type Service interface {
@@ -38,7 +39,10 @@ type Service interface {
 	ReorderPortfolioAssets(userID uuid.UUID, portfolioCode string, assetCodes []string) error
 	CreateOperation(userID uuid.UUID, req CreateOperationRequest) (*OperationRow, error)
 	CreateOperationsBulk(userID uuid.UUID, req CreateBulkOperationsRequest) ([]OperationRow, error)
+	ImportOperations(userID uuid.UUID, req ImportOperationsRequest) (*ImportOperationsResponse, error)
 	ListOperations(userID uuid.UUID) ([]OperationRow, error)
+	CreateOperationMirror(userID, operationID uuid.UUID, req CreateOperationMirrorRequest) (*OperationRow, error)
+	CreateOperationMirrorsBulk(userID uuid.UUID, req CreateOperationMirrorsBulkRequest) ([]OperationRow, error)
 	UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req UpdateOperationRequest) (*OperationRow, error)
 	DeleteOperation(userID uuid.UUID, operationID uuid.UUID) error
 	ListPositions(userID uuid.UUID) ([]PositionRow, error)
@@ -128,6 +132,52 @@ type CreateOperationRequest struct {
 
 type CreateBulkOperationsRequest struct {
 	Operations []CreateBulkOperationRequest
+}
+
+type ImportOperationsRequest struct {
+	Operations                 []ImportOperationRequest
+	CreateMirroredTransactions bool
+	MirroredTransactions       []MirroredTransactionDraftRequest
+}
+
+type ImportOperationRequest struct {
+	ClientRowID    string
+	AssetCode      string
+	OperationType  OperationType
+	Date           time.Time
+	Quantity       int64
+	UnitPrice      int64
+	TotalFeeAmount int64
+	Notes          string
+}
+
+type MirroredTransactionDraftRequest struct {
+	ClientRowID            string
+	SourceAccountCode      string
+	DestinationAccountCode string
+}
+
+type ImportOperationsResponse struct {
+	Operations                  []OperationRow
+	MirroringEnabled            bool
+	MirroredTransactionsCreated int
+}
+
+type CreateOperationMirrorRequest struct {
+	SourceAccountCode      string
+	DestinationAccountCode string
+	TransactionID          *uuid.UUID
+}
+
+type CreateOperationMirrorsBulkRequest struct {
+	Items []CreateOperationMirrorBulkItemRequest
+}
+
+type CreateOperationMirrorBulkItemRequest struct {
+	OperationID            uuid.UUID
+	SourceAccountCode      string
+	DestinationAccountCode string
+	TransactionID          *uuid.UUID
 }
 
 type CreateBulkOperationRequest struct {
@@ -487,28 +537,26 @@ func (s *service) CreateOperation(userID uuid.UUID, req CreateOperationRequest) 
 	if err != nil {
 		return nil, err
 	}
-	grossAmount := req.Quantity * req.UnitPrice
-	netAmount := computeNetAmount(req.OperationType, grossAmount, req.FeeAmount)
-
 	var created *Operation
 	err = s.repo.DB().Transaction(func(tx *gorm.DB) error {
 		created, err = s.repo.CreateOperation(tx, &Operation{
-			ID:            uuid.New(),
-			UserID:        userID,
-			AssetID:       asset.ID,
-			OperationType: req.OperationType,
-			Date:          req.Date,
-			Quantity:      req.Quantity,
-			UnitPrice:     req.UnitPrice,
-			FeeAmount:     req.FeeAmount,
-			GrossAmount:   grossAmount,
-			NetAmount:     netAmount,
-			Notes:         req.Notes,
+			ID:                     uuid.New(),
+			UserID:                 userID,
+			AssetID:                asset.ID,
+			OperationType:          req.OperationType,
+			Date:                   req.Date,
+			Quantity:               req.Quantity,
+			UnitPrice:              req.UnitPrice,
+			FeeAmount:              0,
+			OriginalTotalFeeAmount: req.FeeAmount,
+			GrossAmount:            req.Quantity * req.UnitPrice,
+			NetAmount:              computeNetAmount(req.OperationType, req.Quantity*req.UnitPrice, 0),
+			Notes:                  req.Notes,
 		})
 		if err != nil {
 			return err
 		}
-		return s.rebuildPosition(tx, userID, asset.ID)
+		return s.reallocateOperationFeesByDate(tx, userID, req.Date, req.FeeAmount)
 	})
 	if err != nil {
 		return nil, err
@@ -562,37 +610,38 @@ func (s *service) CreateOperationsBulk(userID uuid.UUID, req CreateBulkOperation
 		})
 	}
 
-	if err := allocateBulkFees(prepared); err != nil {
+	if err := ensureConsistentTotalFeeByDate(prepared); err != nil {
 		return nil, err
 	}
 
 	createdIDs := make([]uuid.UUID, 0, len(prepared))
 	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
-		affectedAssets := make([]uuid.UUID, 0, len(prepared))
+		affectedDates := make(map[string]time.Time)
 		for _, item := range prepared {
-			netAmount := computeNetAmount(item.operationType, item.grossAmount, item.allocatedFee)
 			created, err := s.repo.CreateOperation(tx, &Operation{
-				ID:            uuid.New(),
-				UserID:        userID,
-				AssetID:       item.asset.ID,
-				OperationType: item.operationType,
-				Date:          item.date,
-				Quantity:      item.quantity,
-				UnitPrice:     item.unitPrice,
-				FeeAmount:     item.allocatedFee,
-				GrossAmount:   item.grossAmount,
-				NetAmount:     netAmount,
-				Notes:         item.notes,
+				ID:                     uuid.New(),
+				UserID:                 userID,
+				AssetID:                item.asset.ID,
+				OperationType:          item.operationType,
+				Date:                   item.date,
+				Quantity:               item.quantity,
+				UnitPrice:              item.unitPrice,
+				FeeAmount:              0,
+				OriginalTotalFeeAmount: item.totalFeeAmount,
+				GrossAmount:            item.grossAmount,
+				NetAmount:              computeNetAmount(item.operationType, item.grossAmount, 0),
+				Notes:                  item.notes,
 			})
 			if err != nil {
 				return err
 			}
 			createdIDs = append(createdIDs, created.ID)
-			affectedAssets = append(affectedAssets, item.asset.ID)
+			affectedDates[item.date.UTC().Format("2006-01-02")] = item.date
 		}
 
-		for _, assetID := range uniqueUUIDs(affectedAssets) {
-			if err := s.rebuildPosition(tx, userID, assetID); err != nil {
+		for _, date := range affectedDates {
+			totalFee := totalFeeAmountForDate(prepared, date)
+			if err := s.reallocateOperationFeesByDate(tx, userID, date, totalFee); err != nil {
 				return err
 			}
 		}
@@ -619,6 +668,206 @@ func (s *service) CreateOperationsBulk(userID uuid.UUID, req CreateBulkOperation
 	return result, nil
 }
 
+func (s *service) ImportOperations(userID uuid.UUID, req ImportOperationsRequest) (*ImportOperationsResponse, error) {
+	if len(req.Operations) == 0 {
+		return nil, appErr.ErrInvalidInputWithMessage("at least one operation is required", nil)
+	}
+
+	mirrorDraftsByRowID := make(map[string]MirroredTransactionDraftRequest, len(req.MirroredTransactions))
+	for _, draft := range req.MirroredTransactions {
+		rowID := strings.TrimSpace(draft.ClientRowID)
+		if rowID == "" {
+			return nil, appErr.ErrInvalidInputWithMessage("mirrored transaction client row id is required", nil)
+		}
+		if _, exists := mirrorDraftsByRowID[rowID]; exists {
+			return nil, appErr.ErrInvalidInputWithMessage("duplicate mirrored transaction client row id", nil)
+		}
+		mirrorDraftsByRowID[rowID] = MirroredTransactionDraftRequest{
+			ClientRowID:            rowID,
+			SourceAccountCode:      strings.TrimSpace(draft.SourceAccountCode),
+			DestinationAccountCode: strings.TrimSpace(draft.DestinationAccountCode),
+		}
+	}
+
+	prepared := make([]preparedImportedOperation, 0, len(req.Operations))
+	assetsByCode := make(map[string]*Asset, len(req.Operations))
+	for _, item := range req.Operations {
+		clientRowID := strings.TrimSpace(item.ClientRowID)
+		if clientRowID == "" {
+			return nil, appErr.ErrInvalidInputWithMessage("client row id is required", nil)
+		}
+
+		normalized := CreateOperationRequest{
+			AssetCode:     normalizeAssetCode(item.AssetCode),
+			OperationType: item.OperationType,
+			Date:          item.Date,
+			Quantity:      item.Quantity,
+			UnitPrice:     item.UnitPrice,
+			Notes:         strings.TrimSpace(item.Notes),
+		}
+		if err := s.validateCreateOperation(normalized); err != nil {
+			return nil, err
+		}
+		if err := CheckMoney("total fee amount", item.TotalFeeAmount, true); err != nil {
+			return nil, err
+		}
+
+		asset, ok := assetsByCode[normalized.AssetCode]
+		if !ok {
+			foundAsset, err := s.getOrCreateAssetForBulk(userID, normalized.AssetCode)
+			if err != nil {
+				return nil, err
+			}
+			asset = foundAsset
+			assetsByCode[normalized.AssetCode] = asset
+		}
+
+		preparedItem := preparedImportedOperation{
+			preparedBulkOperation: preparedBulkOperation{
+				asset:          asset,
+				assetCode:      normalized.AssetCode,
+				operationType:  normalized.OperationType,
+				date:           normalized.Date,
+				quantity:       normalized.Quantity,
+				unitPrice:      normalized.UnitPrice,
+				totalFeeAmount: item.TotalFeeAmount,
+				notes:          normalized.Notes,
+				grossAmount:    normalized.Quantity * normalized.UnitPrice,
+			},
+			clientRowID: clientRowID,
+		}
+
+		if req.CreateMirroredTransactions && normalized.OperationType != OperationTypeBonification {
+			draft, ok := mirrorDraftsByRowID[clientRowID]
+			if !ok {
+				return nil, appErr.ErrInvalidInputWithMessage("missing mirrored transaction draft for operation row", nil)
+			}
+			if draft.SourceAccountCode == "" || draft.DestinationAccountCode == "" {
+				return nil, appErr.ErrInvalidInputWithMessage("mirrored transaction accounts are required", nil)
+			}
+			if strings.EqualFold(draft.SourceAccountCode, draft.DestinationAccountCode) {
+				return nil, appErr.ErrInvalidInputWithMessage("mirrored transaction accounts must differ", nil)
+			}
+			preparedItem.mirrorDraft = &draft
+		}
+
+		prepared = append(prepared, preparedItem)
+	}
+
+	bulkItems := make([]preparedBulkOperation, 0, len(prepared))
+	for _, item := range prepared {
+		bulkItems = append(bulkItems, item.preparedBulkOperation)
+	}
+	if err := ensureConsistentTotalFeeByDate(bulkItems); err != nil {
+		return nil, err
+	}
+
+	result := &ImportOperationsResponse{
+		MirroringEnabled: req.CreateMirroredTransactions,
+	}
+	createdIDs := make([]uuid.UUID, 0, len(prepared))
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		affectedAccountCodes := make(map[string]struct{})
+		affectedDates := make(map[string]time.Time)
+		categoryID := uuid.Nil
+		var categoryErr error
+		if req.CreateMirroredTransactions {
+			categoryID, categoryErr = resolveActiveLeafCategoryID(tx, userID, investmentMirrorCategoryCode)
+			if categoryErr != nil {
+				return categoryErr
+			}
+		}
+
+		for _, item := range prepared {
+			created, err := s.repo.CreateOperation(tx, &Operation{
+				ID:                     uuid.New(),
+				UserID:                 userID,
+				AssetID:                item.asset.ID,
+				OperationType:          item.operationType,
+				Date:                   item.date,
+				Quantity:               item.quantity,
+				UnitPrice:              item.unitPrice,
+				FeeAmount:              0,
+				OriginalTotalFeeAmount: item.totalFeeAmount,
+				GrossAmount:            item.grossAmount,
+				NetAmount:              computeNetAmount(item.operationType, item.grossAmount, 0),
+				Notes:                  item.notes,
+			})
+			if err != nil {
+				return err
+			}
+			createdIDs = append(createdIDs, created.ID)
+			affectedDates[item.date.UTC().Format("2006-01-02")] = item.date
+
+			if req.CreateMirroredTransactions && item.mirrorDraft != nil {
+				visibleTx, hiddenTx, err := createMirrorTransferPair(tx, userID, categoryID, created, item.assetCode, *item.mirrorDraft)
+				if err != nil {
+					return err
+				}
+				if err := s.repo.CreateOperationTransactionLinks(tx, []*OperationTransactionLink{
+					{
+						ID:                    uuid.New(),
+						UserID:                userID,
+						InvestmentOperationID: created.ID,
+						TransactionID:         visibleTx.ID,
+						Role:                  OperationTransactionLinkRoleVisibleTransfer,
+					},
+					{
+						ID:                    uuid.New(),
+						UserID:                userID,
+						InvestmentOperationID: created.ID,
+						TransactionID:         hiddenTx.ID,
+						Role:                  OperationTransactionLinkRoleHiddenTransfer,
+					},
+				}); err != nil {
+					return err
+				}
+				result.MirroredTransactionsCreated += 2
+				affectedAccountCodes[item.mirrorDraft.SourceAccountCode] = struct{}{}
+				affectedAccountCodes[item.mirrorDraft.DestinationAccountCode] = struct{}{}
+			}
+		}
+
+		for _, date := range affectedDates {
+			totalFee := totalFeeAmountForDate(bulkItems, date)
+			if err := s.reallocateOperationFeesByDate(tx, userID, date, totalFee); err != nil {
+				return err
+			}
+		}
+
+		if len(affectedAccountCodes) > 0 {
+			codes := make([]string, 0, len(affectedAccountCodes))
+			for code := range affectedAccountCodes {
+				codes = append(codes, code)
+			}
+			if err := refreshAccountBalances(tx, userID, codes); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.repo.ListOperations(userID)
+	if err != nil {
+		return nil, err
+	}
+	createdSet := make(map[uuid.UUID]struct{}, len(createdIDs))
+	for _, id := range createdIDs {
+		createdSet[id] = struct{}{}
+	}
+	result.Operations = make([]OperationRow, 0, len(createdIDs))
+	for _, row := range rows {
+		if _, ok := createdSet[row.ID]; ok {
+			result.Operations = append(result.Operations, row)
+		}
+	}
+
+	return result, nil
+}
+
 func (s *service) ListOperations(userID uuid.UUID) ([]OperationRow, error) {
 	rows, err := s.repo.ListOperations(userID)
 	if err != nil {
@@ -626,6 +875,184 @@ func (s *service) ListOperations(userID uuid.UUID) ([]OperationRow, error) {
 	}
 	s.refreshMissingAssetMetadataForUser(userID)
 	return rows, nil
+}
+
+func (s *service) CreateOperationMirror(userID, operationID uuid.UUID, req CreateOperationMirrorRequest) (*OperationRow, error) {
+	operation, err := s.repo.GetOperationByID(userID, operationID)
+	if err != nil {
+		return nil, err
+	}
+	if operation.OperationType == OperationTypeBonification {
+		return nil, appErr.ErrInvalidInputWithMessage("bonification operations cannot be mirrored", nil)
+	}
+
+	if req.TransactionID == nil {
+		req.SourceAccountCode = strings.TrimSpace(req.SourceAccountCode)
+		req.DestinationAccountCode = strings.TrimSpace(req.DestinationAccountCode)
+		if req.SourceAccountCode == "" || req.DestinationAccountCode == "" {
+			return nil, appErr.ErrInvalidInputWithMessage("mirror accounts are required", nil)
+		}
+	}
+
+	err = s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		links, err := s.repo.ListOperationTransactionLinks(tx, userID, operationID)
+		if err != nil {
+			return err
+		}
+		if len(links) > 0 {
+			return appErr.ErrInvalidInputWithCode("investment.operation.mirror.already_linked", "investment operation already has linked mirror transactions", nil)
+		}
+
+		categoryID, err := resolveActiveLeafCategoryID(tx, userID, investmentMirrorCategoryCode)
+		if err != nil {
+			return err
+		}
+		assetCode, err := resolveAssetCodeByID(tx, userID, operation.AssetID)
+		if err != nil {
+			return err
+		}
+
+		var visibleTx *transaction.Transaction
+		var hiddenTx *transaction.Transaction
+		if req.TransactionID != nil {
+			visibleTx, hiddenTx, err = attachExistingMirrorTransferPair(tx, userID, categoryID, operation, assetCode, *req.TransactionID)
+			if err != nil {
+				return err
+			}
+		} else {
+			visibleTx, hiddenTx, err = createMirrorTransferPair(tx, userID, categoryID, operation, assetCode, MirroredTransactionDraftRequest{
+				SourceAccountCode:      req.SourceAccountCode,
+				DestinationAccountCode: req.DestinationAccountCode,
+			})
+			if err != nil {
+				return err
+			}
+		}
+
+		if err := s.repo.CreateOperationTransactionLinks(tx, []*OperationTransactionLink{
+			{
+				ID:                    uuid.New(),
+				UserID:                userID,
+				InvestmentOperationID: operation.ID,
+				TransactionID:         visibleTx.ID,
+				Role:                  OperationTransactionLinkRoleVisibleTransfer,
+			},
+			{
+				ID:                    uuid.New(),
+				UserID:                userID,
+				InvestmentOperationID: operation.ID,
+				TransactionID:         hiddenTx.ID,
+				Role:                  OperationTransactionLinkRoleHiddenTransfer,
+			},
+		}); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return s.operationToRow(userID, operation)
+}
+
+func (s *service) CreateOperationMirrorsBulk(userID uuid.UUID, req CreateOperationMirrorsBulkRequest) ([]OperationRow, error) {
+	if len(req.Items) == 0 {
+		return nil, appErr.ErrInvalidInputWithMessage("at least one mirror item is required", nil)
+	}
+
+	updatedIDs := make([]uuid.UUID, 0, len(req.Items))
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		categoryID, err := resolveActiveLeafCategoryID(tx, userID, investmentMirrorCategoryCode)
+		if err != nil {
+			return err
+		}
+
+		for _, item := range req.Items {
+			operation, err := s.repo.GetOperationByID(userID, item.OperationID)
+			if err != nil {
+				return err
+			}
+			if operation.OperationType == OperationTypeBonification {
+				return appErr.ErrInvalidInputWithMessage("bonification operations cannot be mirrored", nil)
+			}
+
+			links, err := s.repo.ListOperationTransactionLinks(tx, userID, item.OperationID)
+			if err != nil {
+				return err
+			}
+			if len(links) > 0 {
+				return appErr.ErrInvalidInputWithCode("investment.operation.mirror.already_linked", "investment operation already has linked mirror transactions", nil)
+			}
+
+			assetCode, err := resolveAssetCodeByID(tx, userID, operation.AssetID)
+			if err != nil {
+				return err
+			}
+
+			var visibleTx *transaction.Transaction
+			var hiddenTx *transaction.Transaction
+			if item.TransactionID != nil {
+				visibleTx, hiddenTx, err = attachExistingMirrorTransferPair(tx, userID, categoryID, operation, assetCode, *item.TransactionID)
+				if err != nil {
+					return err
+				}
+			} else {
+				item.SourceAccountCode = strings.TrimSpace(item.SourceAccountCode)
+				item.DestinationAccountCode = strings.TrimSpace(item.DestinationAccountCode)
+				if item.SourceAccountCode == "" || item.DestinationAccountCode == "" {
+					return appErr.ErrInvalidInputWithMessage("mirror accounts are required", nil)
+				}
+				visibleTx, hiddenTx, err = createMirrorTransferPair(tx, userID, categoryID, operation, assetCode, MirroredTransactionDraftRequest{
+					SourceAccountCode:      item.SourceAccountCode,
+					DestinationAccountCode: item.DestinationAccountCode,
+				})
+				if err != nil {
+					return err
+				}
+			}
+
+			if err := s.repo.CreateOperationTransactionLinks(tx, []*OperationTransactionLink{
+				{
+					ID:                    uuid.New(),
+					UserID:                userID,
+					InvestmentOperationID: operation.ID,
+					TransactionID:         visibleTx.ID,
+					Role:                  OperationTransactionLinkRoleVisibleTransfer,
+				},
+				{
+					ID:                    uuid.New(),
+					UserID:                userID,
+					InvestmentOperationID: operation.ID,
+					TransactionID:         hiddenTx.ID,
+					Role:                  OperationTransactionLinkRoleHiddenTransfer,
+				},
+			}); err != nil {
+				return err
+			}
+			updatedIDs = append(updatedIDs, operation.ID)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.repo.ListOperations(userID)
+	if err != nil {
+		return nil, err
+	}
+	updatedSet := make(map[uuid.UUID]struct{}, len(updatedIDs))
+	for _, id := range updatedIDs {
+		updatedSet[id] = struct{}{}
+	}
+	result := make([]OperationRow, 0, len(updatedIDs))
+	for _, row := range rows {
+		if _, ok := updatedSet[row.ID]; ok {
+			result = append(result, row)
+		}
+	}
+	return result, nil
 }
 
 func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req UpdateOperationRequest) (*OperationRow, error) {
@@ -639,7 +1066,7 @@ func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req U
 	finalDate := current.Date
 	finalQuantity := current.Quantity
 	finalUnitPrice := current.UnitPrice
-	finalFeeAmount := current.FeeAmount
+	finalTotalFeeAmount := current.OriginalTotalFeeAmount
 	finalNotes := current.Notes
 
 	update := &UpdateOperationModel{}
@@ -684,8 +1111,8 @@ func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req U
 		if err := CheckMoney("fee amount", *req.FeeAmount, true); err != nil {
 			return nil, err
 		}
-		finalFeeAmount = *req.FeeAmount
-		update.FeeAmount = req.FeeAmount
+		finalTotalFeeAmount = *req.FeeAmount
+		update.OriginalTotalFeeAmount = req.FeeAmount
 	}
 	if req.Notes != nil {
 		trimmed := strings.TrimSpace(*req.Notes)
@@ -693,14 +1120,14 @@ func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req U
 		update.Notes = &trimmed
 	}
 	if update.AssetID == nil && update.OperationType == nil && update.Date == nil && update.Quantity == nil &&
-		update.UnitPrice == nil && update.FeeAmount == nil && update.Notes == nil {
+		update.UnitPrice == nil && update.OriginalTotalFeeAmount == nil && update.Notes == nil {
 		return nil, appErr.ErrInvalidInputWithMessage("at least one operation field must be provided", nil)
 	}
 
 	grossAmount := finalQuantity * finalUnitPrice
-	netAmount := computeNetAmount(finalOperationType, grossAmount, finalFeeAmount)
 	update.GrossAmount = &grossAmount
-	update.NetAmount = &netAmount
+	provisionalNetAmount := computeNetAmount(finalOperationType, grossAmount, 0)
+	update.NetAmount = &provisionalNetAmount
 
 	affectedAssets := []uuid.UUID{current.AssetID}
 	if finalAssetID != current.AssetID {
@@ -711,6 +1138,35 @@ func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req U
 	err = s.repo.DB().Transaction(func(tx *gorm.DB) error {
 		updated, err = s.repo.UpdateOperation(tx, userID, operationID, update)
 		if err != nil {
+			return err
+		}
+		if !sameOperationDate(current.Date, finalDate) {
+			oldTotalFee, err := s.totalFeeAmountForExistingDate(tx, userID, current.Date)
+			if err != nil {
+				return err
+			}
+			if err := s.reallocateOperationFeesByDate(tx, userID, current.Date, oldTotalFee); err != nil {
+				return err
+			}
+			if req.FeeAmount == nil {
+				existingNewDateFee, err := s.totalFeeAmountForExistingDate(tx, userID, finalDate)
+				if err != nil {
+					return err
+				}
+				if existingNewDateFee > 0 {
+					finalTotalFeeAmount = existingNewDateFee
+				}
+			}
+			if finalTotalFeeAmount != updated.OriginalTotalFeeAmount {
+				updated, err = s.repo.UpdateOperation(tx, userID, operationID, &UpdateOperationModel{
+					OriginalTotalFeeAmount: &finalTotalFeeAmount,
+				})
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.reallocateOperationFeesByDate(tx, userID, finalDate, finalTotalFeeAmount); err != nil {
 			return err
 		}
 		for _, assetID := range uniqueUUIDs(affectedAssets) {
@@ -734,7 +1190,17 @@ func (s *service) DeleteOperation(userID uuid.UUID, operationID uuid.UUID) error
 		return err
 	}
 	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		if err := s.deleteMirroredTransactionsForOperation(tx, userID, operationID); err != nil {
+			return err
+		}
 		if err := s.repo.DeleteOperation(tx, userID, operationID); err != nil {
+			return err
+		}
+		oldTotalFee, err := s.totalFeeAmountForExistingDate(tx, userID, current.Date)
+		if err != nil {
+			return err
+		}
+		if err := s.reallocateOperationFeesByDate(tx, userID, current.Date, oldTotalFee); err != nil {
 			return err
 		}
 		return s.rebuildPosition(tx, userID, current.AssetID)
@@ -1840,42 +2306,544 @@ type preparedBulkOperation struct {
 	grossAmount    int64
 }
 
-func allocateBulkFees(items []preparedBulkOperation) error {
+type preparedImportedOperation struct {
+	preparedBulkOperation
+	clientRowID string
+	mirrorDraft *MirroredTransactionDraftRequest
+}
+
+func ensureConsistentTotalFeeByDate(items []preparedBulkOperation) error {
 	byGroup := make(map[string][]int)
 	for index, item := range items {
+		if item.operationType == OperationTypeBonification {
+			continue
+		}
 		dateKey := item.date.UTC().Format("2006-01-02")
-		groupKey := dateKey + ":" + strconv.FormatInt(item.totalFeeAmount, 10)
-		byGroup[groupKey] = append(byGroup[groupKey], index)
+		byGroup[dateKey] = append(byGroup[dateKey], index)
 	}
 
 	for _, indexes := range byGroup {
 		dayFee := int64(-1)
-		totalGross := int64(0)
 		for _, index := range indexes {
-			totalGross += items[index].grossAmount
 			if dayFee == -1 {
 				dayFee = items[index].totalFeeAmount
 				continue
 			}
-		}
-		if dayFee <= 0 {
-			for _, index := range indexes {
-				items[index].allocatedFee = 0
+			if items[index].totalFeeAmount != dayFee {
+				return appErr.ErrInvalidInputWithMessage("all operations on the same day must use the same total fee amount", nil)
 			}
+		}
+	}
+	return nil
+}
+
+func totalFeeAmountForDate(items []preparedBulkOperation, date time.Time) int64 {
+	targetDate := date.UTC().Format("2006-01-02")
+	for _, item := range items {
+		if item.operationType == OperationTypeBonification {
 			continue
 		}
-		remaining := dayFee
-		for i, index := range indexes {
-			if i == len(indexes)-1 {
-				items[index].allocatedFee = remaining
+		if item.date.UTC().Format("2006-01-02") == targetDate {
+			return item.totalFeeAmount
+		}
+	}
+	return 0
+}
+
+func sameOperationDate(left, right time.Time) bool {
+	return left.UTC().Format("2006-01-02") == right.UTC().Format("2006-01-02")
+}
+
+func (s *service) totalFeeAmountForExistingDate(tx *gorm.DB, userID uuid.UUID, date time.Time) (int64, error) {
+	operations, err := s.repo.ListOperationsByDate(tx, userID, date)
+	if err != nil {
+		return 0, err
+	}
+	for _, operation := range operations {
+		if operation.OperationType == OperationTypeBonification {
+			continue
+		}
+		return operation.OriginalTotalFeeAmount, nil
+	}
+	return 0, nil
+}
+
+func (s *service) reallocateOperationFeesByDate(tx *gorm.DB, userID uuid.UUID, date time.Time, totalFeeAmount int64) error {
+	operations, err := s.repo.ListOperationsByDate(tx, userID, date)
+	if err != nil {
+		return err
+	}
+
+	reallocatable := make([]preparedBulkOperation, 0, len(operations))
+	for _, operation := range operations {
+		if operation.OperationType == OperationTypeBonification {
+			continue
+		}
+		reallocatable = append(reallocatable, preparedBulkOperation{
+			date:           operation.Date,
+			operationType:  operation.OperationType,
+			quantity:       operation.Quantity,
+			unitPrice:      operation.UnitPrice,
+			totalFeeAmount: totalFeeAmount,
+			grossAmount:    operation.GrossAmount,
+		})
+	}
+
+	if len(reallocatable) > 0 {
+		totalGross := int64(0)
+		for _, item := range reallocatable {
+			totalGross += item.grossAmount
+		}
+		remaining := totalFeeAmount
+		for index := range reallocatable {
+			if index == len(reallocatable)-1 {
+				reallocatable[index].allocatedFee = remaining
 				break
 			}
-			allocated := divideRounded(dayFee*items[index].grossAmount, totalGross)
+			allocated := int64(0)
+			if totalGross > 0 && totalFeeAmount > 0 {
+				allocated = divideRounded(totalFeeAmount*reallocatable[index].grossAmount, totalGross)
+			}
 			if allocated > remaining {
 				allocated = remaining
 			}
-			items[index].allocatedFee = allocated
+			reallocatable[index].allocatedFee = allocated
 			remaining -= allocated
+		}
+	}
+
+	reallocIndex := 0
+	affectedAssets := make([]uuid.UUID, 0, len(operations))
+	for _, operation := range operations {
+		affectedAssets = append(affectedAssets, operation.AssetID)
+		if operation.OperationType == OperationTypeBonification {
+			if operation.OriginalTotalFeeAmount != 0 || operation.FeeAmount != 0 {
+				zero := int64(0)
+				netAmount := computeNetAmount(operation.OperationType, operation.GrossAmount, 0)
+				if _, err := s.repo.UpdateOperation(tx, userID, operation.ID, &UpdateOperationModel{
+					FeeAmount:              &zero,
+					OriginalTotalFeeAmount: &zero,
+					NetAmount:              &netAmount,
+				}); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		allocatedFee := reallocatable[reallocIndex].allocatedFee
+		netAmount := computeNetAmount(operation.OperationType, operation.GrossAmount, allocatedFee)
+		if _, err := s.repo.UpdateOperation(tx, userID, operation.ID, &UpdateOperationModel{
+			FeeAmount:              &allocatedFee,
+			OriginalTotalFeeAmount: &totalFeeAmount,
+			NetAmount:              &netAmount,
+		}); err != nil {
+			return err
+		}
+		operation.FeeAmount = allocatedFee
+		operation.OriginalTotalFeeAmount = totalFeeAmount
+		operation.NetAmount = netAmount
+		if err := s.syncMirroredTransactionsForOperation(tx, userID, &operation); err != nil {
+			return err
+		}
+		reallocIndex++
+	}
+
+	for _, assetID := range uniqueUUIDs(affectedAssets) {
+		if err := s.rebuildPosition(tx, userID, assetID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type dbAccountRow struct {
+	ID   uuid.UUID `gorm:"column:id"`
+	Code string    `gorm:"column:code"`
+}
+
+func resolveActiveLeafCategoryID(tx *gorm.DB, userID uuid.UUID, code string) (uuid.UUID, error) {
+	var row struct {
+		ID uuid.UUID `gorm:"column:id"`
+	}
+	err := tx.Table("categories").
+		Select("id").
+		Where("user_id = ? AND code = ? AND type = ? AND deactivated_at IS NULL AND parent_id IS NOT NULL", userID, strings.ToLower(code), "MOVEMENT").
+		First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return uuid.Nil, appErr.ErrInvalidInputWithMessage("required investment movement category not found", nil)
+		}
+		return uuid.Nil, err
+	}
+	return row.ID, nil
+}
+
+func resolveActiveAccountByCode(tx *gorm.DB, userID uuid.UUID, code string) (*dbAccountRow, error) {
+	var row dbAccountRow
+	err := tx.Table("accounts").
+		Select("id, code").
+		Where("user_id = ? AND code = ? AND deactivated_at IS NULL", userID, strings.ToLower(strings.TrimSpace(code))).
+		First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, appErr.ErrAccountNotFound()
+		}
+		return nil, err
+	}
+	return &row, nil
+}
+
+func resolveAssetCodeByID(tx *gorm.DB, userID, assetID uuid.UUID) (string, error) {
+	type assetRow struct {
+		Code string `gorm:"column:code"`
+	}
+	var row assetRow
+	err := tx.Table("investment_assets").
+		Select("code").
+		Where("user_id = ? AND id = ?", userID, assetID).
+		First(&row).Error
+	if err != nil {
+		return "", err
+	}
+	return row.Code, nil
+}
+
+func loadTransactionByID(tx *gorm.DB, userID, transactionID uuid.UUID) (*transaction.Transaction, error) {
+	var row transaction.Transaction
+	err := tx.Where("user_id = ? AND id = ?", userID, transactionID).First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func deleteTransactionsByIDs(tx *gorm.DB, userID uuid.UUID, transactionIDs []uuid.UUID) error {
+	if len(transactionIDs) == 0 {
+		return nil
+	}
+	return tx.Where("user_id = ? AND id IN ?", userID, transactionIDs).Delete(&transaction.Transaction{}).Error
+}
+
+func resolveAccountCodesByIDs(tx *gorm.DB, userID uuid.UUID, accountIDs []uuid.UUID) ([]string, error) {
+	uniqueIDs := uniqueUUIDs(accountIDs)
+	if len(uniqueIDs) == 0 {
+		return []string{}, nil
+	}
+
+	rows := make([]dbAccountRow, 0, len(uniqueIDs))
+	if err := tx.Table("accounts").
+		Select("id, code").
+		Where("user_id = ? AND id IN ?", userID, uniqueIDs).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	codes := make([]string, 0, len(rows))
+	for _, row := range rows {
+		codes = append(codes, row.Code)
+	}
+	return codes, nil
+}
+
+func loadTransferPairByVisibleTransactionID(tx *gorm.DB, userID, transactionID uuid.UUID) (*transaction.Transaction, *transaction.Transaction, error) {
+	visibleTx, err := loadTransactionByID(tx, userID, transactionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if visibleTx.TransferID == nil {
+		return nil, nil, appErr.ErrInvalidInputWithCode("investment.operation.mirror.requires_transfer", "selected transaction must be a transfer", nil)
+	}
+	if visibleTx.IsVisible != nil && !*visibleTx.IsVisible {
+		return nil, nil, appErr.ErrInvalidInputWithCode("investment.operation.mirror.requires_visible_transfer", "selected transaction must be the visible transfer row", nil)
+	}
+
+	var pair []transaction.Transaction
+	if err := tx.Where("user_id = ? AND transfer_id = ?", userID, *visibleTx.TransferID).Order("created_at ASC").Find(&pair).Error; err != nil {
+		return nil, nil, err
+	}
+	if len(pair) != 2 {
+		return nil, nil, appErr.ErrInvalidInputWithCode("transaction.transfer.invalid_pair", "linked transfer pair is inconsistent", nil)
+	}
+
+	first := pair[0]
+	second := pair[1]
+	if first.IsVisible != nil && !*first.IsVisible {
+		first, second = second, first
+	}
+	if first.IsVisible != nil && !*first.IsVisible {
+		return nil, nil, appErr.ErrInvalidInputWithCode("investment.operation.mirror.requires_visible_transfer", "selected transaction must be the visible transfer row", nil)
+	}
+	return &first, &second, nil
+}
+
+func ensureTransactionsAreUnlinked(tx *gorm.DB, userID uuid.UUID, transactionIDs []uuid.UUID) error {
+	var count int64
+	if err := tx.Table("investment_operation_transaction_links").
+		Where("user_id = ? AND transaction_id IN ?", userID, uniqueUUIDs(transactionIDs)).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return appErr.ErrInvalidInputWithCode("investment.operation.mirror.transaction_already_linked", "selected transaction is already linked to another investment operation", nil)
+	}
+	return nil
+}
+
+func createMirrorTransferPair(tx *gorm.DB, userID, categoryID uuid.UUID, operation *Operation, assetCode string, draft MirroredTransactionDraftRequest) (*transaction.Transaction, *transaction.Transaction, error) {
+	sourceAccount, err := resolveActiveAccountByCode(tx, userID, draft.SourceAccountCode)
+	if err != nil {
+		return nil, nil, err
+	}
+	destinationAccount, err := resolveActiveAccountByCode(tx, userID, draft.DestinationAccountCode)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sourceAccount.ID == destinationAccount.ID {
+		return nil, nil, appErr.ErrInvalidInputWithMessage("account can't be the same as account transfer", nil)
+	}
+
+	transferID, err := nextTransferID(tx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	description := mirrorTransactionDescription(operation.OperationType, operation.Quantity, assetCode)
+	amount := operation.NetAmount
+	negativeAmount := -amount
+	visible := &transaction.Transaction{
+		ID:                   uuid.New(),
+		UserID:               userID,
+		CategoryID:           categoryID,
+		Description:          description,
+		Date:                 operation.Date,
+		AccountID:            sourceAccount.ID,
+		Amount:               negativeAmount,
+		TransferID:           &transferID,
+		TransferAccountID:    &destinationAccount.ID,
+		IsVisible:            transaction.BoolPtr(true),
+		ExcludeFromDashboard: false,
+	}
+	hidden := &transaction.Transaction{
+		ID:                   uuid.New(),
+		UserID:               userID,
+		CategoryID:           categoryID,
+		Description:          description,
+		Date:                 operation.Date,
+		AccountID:            destinationAccount.ID,
+		Amount:               amount,
+		TransferID:           &transferID,
+		TransferAccountID:    &sourceAccount.ID,
+		IsVisible:            transaction.BoolPtr(false),
+		ExcludeFromDashboard: false,
+	}
+	if err := tx.Create(visible).Error; err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Create(hidden).Error; err != nil {
+		return nil, nil, err
+	}
+	return visible, hidden, nil
+}
+
+func attachExistingMirrorTransferPair(tx *gorm.DB, userID, categoryID uuid.UUID, operation *Operation, assetCode string, transactionID uuid.UUID) (*transaction.Transaction, *transaction.Transaction, error) {
+	visibleTx, hiddenTx, err := loadTransferPairByVisibleTransactionID(tx, userID, transactionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := ensureTransactionsAreUnlinked(tx, userID, []uuid.UUID{visibleTx.ID, hiddenTx.ID}); err != nil {
+		return nil, nil, err
+	}
+
+	description := mirrorTransactionDescription(operation.OperationType, operation.Quantity, assetCode)
+	if err := tx.Model(&transaction.Transaction{}).
+		Where("user_id = ? AND id = ?", userID, visibleTx.ID).
+		Updates(map[string]any{
+			"category_id": categoryID,
+			"description": description,
+			"date":        operation.Date,
+			"amount":      -operation.NetAmount,
+		}).Error; err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Model(&transaction.Transaction{}).
+		Where("user_id = ? AND id = ?", userID, hiddenTx.ID).
+		Updates(map[string]any{
+			"category_id": categoryID,
+			"description": description,
+			"date":        operation.Date,
+			"amount":      operation.NetAmount,
+		}).Error; err != nil {
+		return nil, nil, err
+	}
+
+	accountCodes, err := resolveAccountCodesByIDs(tx, userID, accountIDsForRefreshFromTransaction(visibleTx))
+	if err != nil {
+		return nil, nil, err
+	}
+	hiddenAccountCodes, err := resolveAccountCodesByIDs(tx, userID, accountIDsForRefreshFromTransaction(hiddenTx))
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := refreshAccountBalances(tx, userID, append(accountCodes, hiddenAccountCodes...)); err != nil {
+		return nil, nil, err
+	}
+
+	visibleTx.CategoryID = categoryID
+	visibleTx.Description = description
+	visibleTx.Date = operation.Date
+	visibleTx.Amount = -operation.NetAmount
+	hiddenTx.CategoryID = categoryID
+	hiddenTx.Description = description
+	hiddenTx.Date = operation.Date
+	hiddenTx.Amount = operation.NetAmount
+	return visibleTx, hiddenTx, nil
+}
+
+func (s *service) syncMirroredTransactionsForOperation(tx *gorm.DB, userID uuid.UUID, operation *Operation) error {
+	links, err := s.repo.ListOperationTransactionLinks(tx, userID, operation.ID)
+	if err != nil {
+		return err
+	}
+	if len(links) == 0 {
+		return nil
+	}
+
+	if operation.OperationType == OperationTypeBonification {
+		return s.deleteMirroredTransactionsForOperation(tx, userID, operation.ID)
+	}
+
+	assetCode, err := resolveAssetCodeByID(tx, userID, operation.AssetID)
+	if err != nil {
+		return err
+	}
+	categoryID, err := resolveActiveLeafCategoryID(tx, userID, investmentMirrorCategoryCode)
+	if err != nil {
+		return err
+	}
+	description := mirrorTransactionDescription(operation.OperationType, operation.Quantity, assetCode)
+
+	accountIDsToRefresh := make([]uuid.UUID, 0, len(links)*2)
+	for _, link := range links {
+		currentTx, err := loadTransactionByID(tx, userID, link.TransactionID)
+		if err != nil {
+			return err
+		}
+		accountIDsToRefresh = append(accountIDsToRefresh, accountIDsForRefreshFromTransaction(currentTx)...)
+
+		amount := operation.NetAmount
+		isVisible := link.Role == OperationTransactionLinkRoleVisibleTransfer
+		if isVisible {
+			amount = -amount
+		}
+
+		updates := map[string]any{
+			"category_id": categoryID,
+			"description": description,
+			"date":        operation.Date,
+			"amount":      amount,
+		}
+		if err := tx.Model(&transaction.Transaction{}).
+			Where("user_id = ? AND id = ?", userID, currentTx.ID).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+
+	accountCodesToRefresh, err := resolveAccountCodesByIDs(tx, userID, accountIDsToRefresh)
+	if err != nil {
+		return err
+	}
+	return refreshAccountBalances(tx, userID, accountCodesToRefresh)
+}
+
+func (s *service) deleteMirroredTransactionsForOperation(tx *gorm.DB, userID, operationID uuid.UUID) error {
+	links, err := s.repo.ListOperationTransactionLinks(tx, userID, operationID)
+	if err != nil {
+		return err
+	}
+	if len(links) == 0 {
+		return nil
+	}
+
+	transactionIDs := make([]uuid.UUID, 0, len(links))
+	accountIDsToRefresh := make([]uuid.UUID, 0, len(links)*2)
+	for _, link := range links {
+		row, err := loadTransactionByID(tx, userID, link.TransactionID)
+		if err != nil {
+			return err
+		}
+		transactionIDs = append(transactionIDs, row.ID)
+		accountIDsToRefresh = append(accountIDsToRefresh, accountIDsForRefreshFromTransaction(row)...)
+	}
+
+	if err := deleteTransactionsByIDs(tx, userID, uniqueUUIDs(transactionIDs)); err != nil {
+		return err
+	}
+	if err := s.repo.DeleteOperationTransactionLinks(tx, userID, operationID); err != nil {
+		return err
+	}
+	accountCodesToRefresh, err := resolveAccountCodesByIDs(tx, userID, accountIDsToRefresh)
+	if err != nil {
+		return err
+	}
+	return refreshAccountBalances(tx, userID, accountCodesToRefresh)
+}
+
+func accountIDsForRefreshFromTransaction(row *transaction.Transaction) []uuid.UUID {
+	out := []uuid.UUID{}
+	if row.AccountID != uuid.Nil {
+		out = append(out, row.AccountID)
+	}
+	if row.TransferAccountID != nil && *row.TransferAccountID != uuid.Nil {
+		out = append(out, *row.TransferAccountID)
+	}
+	return out
+}
+
+func mirrorTransactionDescription(operationType OperationType, quantity int64, assetCode string) string {
+	switch operationType {
+	case OperationTypeSell:
+		return "VENDA DE " + strconv.FormatInt(quantity, 10) + " " + strings.ToUpper(strings.TrimSpace(assetCode))
+	default:
+		return "COMPRA DE " + strconv.FormatInt(quantity, 10) + " " + strings.ToUpper(strings.TrimSpace(assetCode))
+	}
+}
+
+func nextTransferID(tx *gorm.DB) (int64, error) {
+	var transferID int64
+	if err := tx.Raw("SELECT nextval('transfer_id_seq')").Scan(&transferID).Error; err != nil {
+		return 0, err
+	}
+	return transferID, nil
+}
+
+func refreshAccountBalances(tx *gorm.DB, userID uuid.UUID, accountCodes []string) error {
+	normalized := make([]string, 0, len(accountCodes))
+	seen := make(map[string]struct{}, len(accountCodes))
+	for _, code := range accountCodes {
+		lower := strings.ToLower(strings.TrimSpace(code))
+		if lower == "" {
+			continue
+		}
+		if _, ok := seen[lower]; ok {
+			continue
+		}
+		seen[lower] = struct{}{}
+		normalized = append(normalized, lower)
+	}
+
+	for _, code := range normalized {
+		var account dbAccountRow
+		if err := tx.Table("accounts").Select("id, code").Where("user_id = ? AND code = ?", userID, code).First(&account).Error; err != nil {
+			return err
+		}
+		var balance int64
+		if err := tx.Table("transactions").Select("COALESCE(SUM(amount), 0)").Where("user_id = ? AND account_id = ?", userID, account.ID).Scan(&balance).Error; err != nil {
+			return err
+		}
+		if err := tx.Table("accounts").Where("user_id = ? AND id = ?", userID, account.ID).Update("balance", balance).Error; err != nil {
+			return err
 		}
 	}
 	return nil

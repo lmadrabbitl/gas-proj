@@ -190,6 +190,9 @@ func (serv *service) UpdateCategory(userID uuid.UUID, code string, req UpdateCat
 	if category.DeactivatedAt != nil {
 		return nil, errors.ErrCategoryDeactivated()
 	}
+	if IsPermanentCategoryCode(category.Code) {
+		return nil, errors.ErrInvalidInputWithCode("category.permanent.read_only", "permanent categories cannot be changed", nil)
+	}
 
 	if req.Name != nil {
 		existingCategories, err := serv.repo.GetByUser(userID, true)
@@ -349,6 +352,13 @@ func (serv *service) DeactivateCategory(userID uuid.UUID, code string) error {
 
 	if err := CheckCategoryCode(code); err != nil {
 		return err
+	}
+	current, err := serv.repo.GetByCode(userID, strings.ToLower(code), false)
+	if err != nil {
+		return err
+	}
+	if IsPermanentCategoryCode(current.Code) {
+		return errors.ErrInvalidInputWithCode("category.permanent.read_only", "permanent categories cannot be changed", nil)
 	}
 
 	category, err := serv.repo.GetByCode(userID, strings.ToLower(code), false)

@@ -22,6 +22,13 @@ const (
 	OperationTypeBonification OperationType = "BONIFICATION"
 )
 
+type OperationTransactionLinkRole string
+
+const (
+	OperationTransactionLinkRoleVisibleTransfer OperationTransactionLinkRole = "VISIBLE_TRANSFER"
+	OperationTransactionLinkRoleHiddenTransfer  OperationTransactionLinkRole = "HIDDEN_TRANSFER"
+)
+
 type Asset struct {
 	ID                uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`
 	UserID            uuid.UUID  `gorm:"type:uuid;not null" json:"user_id"`
@@ -41,23 +48,38 @@ func (Asset) TableName() string {
 }
 
 type Operation struct {
-	ID            uuid.UUID     `gorm:"type:uuid;primaryKey"`
-	UserID        uuid.UUID     `gorm:"type:uuid;not null"`
-	AssetID       uuid.UUID     `gorm:"type:uuid;not null"`
-	OperationType OperationType `gorm:"column:operation_type;type:text;not null"`
-	Date          time.Time     `gorm:"type:date;not null"`
-	Quantity      int64         `gorm:"type:bigint;not null"`
-	UnitPrice     int64         `gorm:"column:unit_price;type:bigint;not null"`
-	FeeAmount     int64         `gorm:"column:fee_amount;type:bigint;not null"`
-	GrossAmount   int64         `gorm:"column:gross_amount;type:bigint;not null"`
-	NetAmount     int64         `gorm:"column:net_amount;type:bigint;not null"`
-	Notes         string        `gorm:"type:text;not null"`
-	CreatedAt     time.Time     `gorm:"type:timestamptz;not null"`
-	UpdatedAt     time.Time     `gorm:"type:timestamptz;not null"`
+	ID                     uuid.UUID     `gorm:"type:uuid;primaryKey"`
+	UserID                 uuid.UUID     `gorm:"type:uuid;not null"`
+	AssetID                uuid.UUID     `gorm:"type:uuid;not null"`
+	OperationType          OperationType `gorm:"column:operation_type;type:text;not null"`
+	Date                   time.Time     `gorm:"type:date;not null"`
+	Quantity               int64         `gorm:"type:bigint;not null"`
+	UnitPrice              int64         `gorm:"column:unit_price;type:bigint;not null"`
+	FeeAmount              int64         `gorm:"column:fee_amount;type:bigint;not null"`
+	OriginalTotalFeeAmount int64         `gorm:"column:original_total_fee_amount;type:bigint;not null;default:0"`
+	GrossAmount            int64         `gorm:"column:gross_amount;type:bigint;not null"`
+	NetAmount              int64         `gorm:"column:net_amount;type:bigint;not null"`
+	Notes                  string        `gorm:"type:text;not null"`
+	CreatedAt              time.Time     `gorm:"type:timestamptz;not null"`
+	UpdatedAt              time.Time     `gorm:"type:timestamptz;not null"`
 }
 
 func (Operation) TableName() string {
 	return "investment_operations"
+}
+
+type OperationTransactionLink struct {
+	ID                    uuid.UUID                    `gorm:"type:uuid;primaryKey"`
+	UserID                uuid.UUID                    `gorm:"type:uuid;not null"`
+	InvestmentOperationID uuid.UUID                    `gorm:"column:investment_operation_id;type:uuid;not null"`
+	TransactionID         uuid.UUID                    `gorm:"column:transaction_id;type:uuid;not null"`
+	Role                  OperationTransactionLinkRole `gorm:"type:text;not null"`
+	CreatedAt             time.Time                    `gorm:"type:timestamptz;not null"`
+	UpdatedAt             time.Time                    `gorm:"type:timestamptz;not null"`
+}
+
+func (OperationTransactionLink) TableName() string {
+	return "investment_operation_transaction_links"
 }
 
 type Position struct {
@@ -137,20 +159,22 @@ type PortfolioAssetRow struct {
 }
 
 type OperationRow struct {
-	ID            uuid.UUID     `json:"id"`
-	AssetCode     string        `json:"asset_code"`
-	AssetName     string        `json:"asset_name"`
-	AssetType     AssetType     `json:"asset_type"`
-	OperationType OperationType `json:"operation_type"`
-	Date          time.Time     `json:"date"`
-	Quantity      int64         `json:"quantity"`
-	UnitPrice     int64         `json:"unit_price"`
-	FeeAmount     int64         `json:"fee_amount"`
-	GrossAmount   int64         `json:"gross_amount"`
-	NetAmount     int64         `json:"net_amount"`
-	Notes         string        `json:"notes"`
-	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
+	ID                     uuid.UUID     `json:"id" gorm:"column:id"`
+	AssetCode              string        `json:"asset_code" gorm:"column:asset_code"`
+	AssetName              string        `json:"asset_name" gorm:"column:asset_name"`
+	AssetType              AssetType     `json:"asset_type" gorm:"column:asset_type"`
+	HasLinkedMirror        bool          `json:"has_linked_mirror" gorm:"column:has_linked_mirror"`
+	OperationType          OperationType `json:"operation_type" gorm:"column:operation_type"`
+	Date                   time.Time     `json:"date" gorm:"column:date"`
+	Quantity               int64         `json:"quantity" gorm:"column:quantity"`
+	UnitPrice              int64         `json:"unit_price" gorm:"column:unit_price"`
+	FeeAmount              int64         `json:"fee_amount" gorm:"column:fee_amount"`
+	OriginalTotalFeeAmount int64         `json:"original_total_fee_amount" gorm:"column:original_total_fee_amount"`
+	GrossAmount            int64         `json:"gross_amount" gorm:"column:gross_amount"`
+	NetAmount              int64         `json:"net_amount" gorm:"column:net_amount"`
+	Notes                  string        `json:"notes" gorm:"column:notes"`
+	CreatedAt              time.Time     `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt              time.Time     `json:"updated_at" gorm:"column:updated_at"`
 }
 
 type PositionRow struct {

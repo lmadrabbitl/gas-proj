@@ -4,11 +4,12 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
 import { forkJoin } from 'rxjs';
 
 import { InvestmentsService } from '../../data/investments.service';
+import { ReferenceDataService } from '../../data/reference-data.service';
 import { getApiErrorMessage } from '../../shared/api-error';
 import { uiMessages } from '../../shared/messages';
 import { MoneyVisibilityService } from '../../shared/money-visibility.service';
 import { brazilianDateToQuery, centsToDecimal, dateInputToIso, decimalToCents } from '../../shared/money';
-import { InvestmentAsset, InvestmentOperationType, InvestmentPosition } from '../../shared/models';
+import { Account, InvestmentAsset, InvestmentOperationType, InvestmentPosition } from '../../shared/models';
 import { ToastService } from '../../shared/toast.service';
 import { investmentAssetLabel } from '../../shared/labels';
 
@@ -37,6 +38,14 @@ interface PositionPreviewRow {
   projectedQuantity: number;
   currentAveragePrice: number;
   projectedAveragePrice: number;
+}
+
+interface MirroredDraftRow {
+  clientRowId: string;
+  date: string;
+  description: string;
+  sourceAccountCode: string;
+  destinationAccountCode: string;
 }
 
 const INITIAL_ROWS = 10;
@@ -239,10 +248,120 @@ const INSERT_COLUMN_COUNT = 6;
         }
       </div>
     </section>
+
+    @if (mirrorModalOpen()) {
+      <div class="modal-backdrop" (click)="cancelMirrorModal()">
+        <section class="panel mirror-modal" (click)="$event.stopPropagation()">
+          <div class="panel-header mirror-modal-header">
+            <div>
+              <h2>{{ messages.mirror.title }}</h2>
+              <p class="page-subtitle">{{ messages.mirror.subtitle }}</p>
+            </div>
+          </div>
+          <p class="field-hint">{{ messages.mirror.applyAllHint }}</p>
+          <div class="table-wrap insert-table-wrap">
+            <table class="insert-preview-table">
+              <thead>
+                <tr>
+                  <th>{{ messages.columns.date }}</th>
+                  <th>{{ messages.mirror.description }}</th>
+                  <th>{{ messages.mirror.source }}</th>
+                  <th>{{ messages.mirror.destination }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of mirrorRows(); track row.clientRowId) {
+                  <tr>
+                    <td>{{ row.date }}</td>
+                    <td>{{ row.description }}</td>
+                    <td>
+                      <select
+                        class="grid-input compact-grid-input"
+                        [ngModel]="row.sourceAccountCode"
+                        name="mirror-source-{{ row.clientRowId }}"
+                        (ngModelChange)="updateMirrorAccount(row, 'sourceAccountCode', $event)"
+                      >
+                        <option value=""></option>
+                        @for (account of activeAccounts(); track account.Code) {
+                          <option [value]="account.Code">{{ account.Name }}</option>
+                        }
+                      </select>
+                    </td>
+                    <td>
+                      <select
+                        class="grid-input compact-grid-input"
+                        [ngModel]="row.destinationAccountCode"
+                        name="mirror-destination-{{ row.clientRowId }}"
+                        (ngModelChange)="updateMirrorAccount(row, 'destinationAccountCode', $event)"
+                      >
+                        <option value=""></option>
+                        @for (account of activeAccounts(); track account.Code) {
+                          <option [value]="account.Code">{{ account.Name }}</option>
+                        }
+                      </select>
+                    </td>
+                  </tr>
+                  @if (mirrorRowErrors(row).length > 0) {
+                    <tr class="draft-error-row">
+                      <td colspan="4">{{ mirrorRowErrors(row).join(' · ') }}</td>
+                    </tr>
+                  }
+                }
+              </tbody>
+            </table>
+          </div>
+          <div class="insert-actions">
+            <button class="ghost-button" type="button" [disabled]="saving()" (click)="cancelMirrorModal()">
+              {{ messages.mirror.back }}
+            </button>
+            <button class="primary-button" type="button" [disabled]="!canSubmitMirrorRows() || saving()" (click)="submitMirroredImport()">
+              {{ saving() ? messages.mirror.submitting : messages.mirror.submit }}
+            </button>
+          </div>
+        </section>
+      </div>
+    }
   `,
+  styles: [`
+    .modal-backdrop {
+      align-items: center;
+      background: rgba(15, 23, 42, 0.42);
+      display: flex;
+      inset: 0;
+      justify-content: center;
+      padding: 24px;
+      position: fixed;
+      z-index: 40;
+    }
+
+    .mirror-modal {
+      background: color-mix(in srgb, var(--surface-strong) 96%, white 4%);
+      border: 1px solid color-mix(in srgb, var(--border) 82%, rgba(15, 23, 42, 0.08));
+      border-radius: 22px;
+      box-shadow: 0 28px 72px rgba(15, 23, 42, 0.26);
+      display: grid;
+      gap: 16px;
+      max-height: min(90vh, 960px);
+      max-width: min(1040px, 100%);
+      overflow: auto;
+      padding: 20px;
+      width: 100%;
+    }
+
+    .mirror-modal-header {
+      align-items: start;
+    }
+
+    .field-hint {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin: 0;
+    }
+  `],
 })
 export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   private readonly moneyVisibility = inject(MoneyVisibilityService);
+  private readonly referenceData = inject(ReferenceDataService);
   readonly nav = uiMessages.investments.nav;
   readonly messages = uiMessages.investments.insert;
   readonly rows = signal<DraftOperationRow[]>([]);
@@ -250,8 +369,13 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   readonly assets = signal<InvestmentAsset[]>([]);
   readonly positions = signal<InvestmentPosition[]>([]);
   readonly editingDateRowId = signal<number | null>(null);
+  readonly mirrorModalOpen = signal(false);
+  readonly mirrorRows = signal<MirroredDraftRow[]>([]);
+  readonly activeAccounts = signal<Account[]>([]);
 
   private nextId = 1;
+  private mirrorSourceApplied = false;
+  private mirrorDestinationApplied = false;
 
   constructor(
     private readonly investmentsService: InvestmentsService,
@@ -264,10 +388,12 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     forkJoin({
       assets: this.investmentsService.listAssets(),
       positions: this.investmentsService.listPositions(),
+      referenceData: this.referenceData.load(),
     }).subscribe({
       next: ({ assets, positions }) => {
         this.assets.set(assets);
         this.positions.set(positions);
+        this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
       },
       error: (error) => this.toast.error(getApiErrorMessage(error)),
     });
@@ -510,38 +636,12 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       return;
     }
     const filled = this.filledRows();
-    this.saving.set(true);
-    this.investmentsService.createBulkOperations({
-      operations: filled.map((row) => ({
-        asset_code: row.assetCode,
-        operation_type: row.operationType as InvestmentOperationType,
-        date: dateInputToIso(brazilianDateToQuery(row.date)),
-        quantity: Number(row.quantity),
-        unit_price: decimalToCents(row.unitPrice),
-        total_fee_amount: decimalToCents(row.totalFeeAmount),
-        notes: '',
-      })),
-    }).subscribe({
-      next: () => {
-        this.toast.success('Operações salvas.');
-        this.resetRows();
-        forkJoin({
-          assets: this.investmentsService.listAssets(),
-          positions: this.investmentsService.listPositions(),
-        }).subscribe({
-          next: ({ assets, positions }) => {
-            this.assets.set(assets);
-            this.positions.set(positions);
-          },
-          error: (error) => this.toast.error(getApiErrorMessage(error)),
-        });
-        this.saving.set(false);
-      },
-      error: (error) => {
-        this.toast.error(getApiErrorMessage(error));
-        this.saving.set(false);
-      },
-    });
+    const mirroredCandidates = filled.filter((row) => row.operationType !== 'BONIFICATION');
+    if (mirroredCandidates.length > 0 && window.confirm(this.messages.mirror.confirm)) {
+      this.openMirrorModal(mirroredCandidates);
+      return;
+    }
+    this.submitImport(false, []);
   }
 
   positionPreviewRows(): PositionPreviewRow[] {
@@ -632,6 +732,59 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     return this.rows().filter((row) => !this.isEmpty(row));
   }
 
+  mirrorRowErrors(row: MirroredDraftRow): string[] {
+    const errors: string[] = [];
+    if (!row.sourceAccountCode) {
+      errors.push('Conta origem obrigatória');
+    }
+    if (!row.destinationAccountCode) {
+      errors.push('Conta destino obrigatória');
+    }
+    if (row.sourceAccountCode && row.destinationAccountCode && row.sourceAccountCode === row.destinationAccountCode) {
+      errors.push('Contas precisam ser diferentes');
+    }
+    return errors;
+  }
+
+  canSubmitMirrorRows(): boolean {
+    return this.mirrorRows().length > 0 && this.mirrorRows().every((row) => this.mirrorRowErrors(row).length === 0);
+  }
+
+  cancelMirrorModal(): void {
+    if (this.saving()) {
+      return;
+    }
+    this.mirrorModalOpen.set(false);
+    this.mirrorRows.set([]);
+  }
+
+  updateMirrorAccount(row: MirroredDraftRow, field: 'sourceAccountCode' | 'destinationAccountCode', value: string): void {
+    const normalized = value.trim();
+    row[field] = normalized;
+
+    if (normalized) {
+      if (field === 'sourceAccountCode' && !this.mirrorSourceApplied) {
+        this.mirrorSourceApplied = true;
+        this.mirrorRows.update((rows) => rows.map((candidate) => ({ ...candidate, sourceAccountCode: normalized })));
+        return;
+      }
+      if (field === 'destinationAccountCode' && !this.mirrorDestinationApplied) {
+        this.mirrorDestinationApplied = true;
+        this.mirrorRows.update((rows) => rows.map((candidate) => ({ ...candidate, destinationAccountCode: normalized })));
+        return;
+      }
+    }
+
+    this.mirrorRows.update((rows) => [...rows]);
+  }
+
+  submitMirroredImport(): void {
+    if (!this.canSubmitMirrorRows()) {
+      return;
+    }
+    this.submitImport(true, this.mirrorRows());
+  }
+
   private focusFirstCell(): void {
     setTimeout(() => {
       const input = this.elementRef.nativeElement.querySelector<HTMLElement>(
@@ -643,6 +796,70 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
 
   private resetRows(): void {
     this.rows.set(Array.from({ length: INITIAL_ROWS }, () => this.createEmptyRow()));
+  }
+
+  private openMirrorModal(rows: DraftOperationRow[]): void {
+    this.mirrorSourceApplied = false;
+    this.mirrorDestinationApplied = false;
+    this.mirrorRows.set(rows.map((row) => ({
+      clientRowId: this.clientRowId(row),
+      date: normalizeDraftDate(row.date),
+      description: mirrorDescription(row),
+      sourceAccountCode: '',
+      destinationAccountCode: '',
+    })));
+    this.mirrorModalOpen.set(true);
+  }
+
+  private submitImport(createMirroredTransactions: boolean, mirroredRows: MirroredDraftRow[]): void {
+    const filled = this.filledRows();
+    this.saving.set(true);
+    this.investmentsService.importOperations({
+      operations: filled.map((row) => ({
+        client_row_id: this.clientRowId(row),
+        asset_code: row.assetCode,
+        operation_type: row.operationType as InvestmentOperationType,
+        date: dateInputToIso(brazilianDateToQuery(row.date)),
+        quantity: Number(row.quantity),
+        unit_price: decimalToCents(row.unitPrice),
+        total_fee_amount: decimalToCents(row.totalFeeAmount),
+        notes: '',
+      })),
+      create_mirrored_transactions: createMirroredTransactions,
+      mirrored_transactions: mirroredRows.map((row) => ({
+        client_row_id: row.clientRowId,
+        source_account_code: row.sourceAccountCode,
+        destination_account_code: row.destinationAccountCode,
+      })),
+    }).subscribe({
+      next: (result) => {
+        this.toast.success(
+          result.mirroring_enabled
+            ? 'Operações e transferências vinculadas salvas.'
+            : 'Operações salvas.',
+        );
+        this.mirrorModalOpen.set(false);
+        this.mirrorRows.set([]);
+        this.resetRows();
+        forkJoin({
+          assets: this.investmentsService.listAssets(),
+          positions: this.investmentsService.listPositions(),
+          referenceData: this.referenceData.reload(),
+        }).subscribe({
+          next: ({ assets, positions }) => {
+            this.assets.set(assets);
+            this.positions.set(positions);
+            this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
+          },
+          error: (error) => this.toast.error(getApiErrorMessage(error)),
+        });
+        this.saving.set(false);
+      },
+      error: (error) => {
+        this.toast.error(getApiErrorMessage(error));
+        this.saving.set(false);
+      },
+    });
   }
 
   private createEmptyRow(id = this.nextId++): DraftOperationRow {
@@ -719,6 +936,10 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       }
       siblingRow = siblingRow[delta > 0 ? 'nextElementSibling' : 'previousElementSibling'];
     }
+  }
+
+  private clientRowId(row: DraftOperationRow): string {
+    return `row-${row.id}`;
   }
 }
 
@@ -855,4 +1076,13 @@ function divideRounded(numerator: number, denominator: number): number {
     return 0;
   }
   return Math.round(numerator / denominator);
+}
+
+function mirrorDescription(row: DraftOperationRow): string {
+  const normalizedCode = row.assetCode.trim().toUpperCase();
+  const quantity = Number(row.quantity) || 0;
+  if (row.operationType === 'SELL') {
+    return `VENDA DE ${quantity} ${normalizedCode}`;
+  }
+  return `COMPRA DE ${quantity} ${normalizedCode}`;
 }

@@ -394,6 +394,9 @@ func (serv *transactionService) GetTransactionByID(userID uuid.UUID, transaction
 }
 
 func (serv *transactionService) UpdateTransaction(userID uuid.UUID, transactionID uuid.UUID, req UpdateTransactionRequest) (*TransactionResponseItem, error) {
+	if err := serv.ensureMirrorTransactionUpdateAllowed(userID, transactionID, req); err != nil {
+		return nil, err
+	}
 	dbTransaction := serv.beginDBTransaction()
 	shouldCommit := false
 	accountSet := map[uuid.UUID]struct{}{}
@@ -451,6 +454,9 @@ func (serv *transactionService) UpdateTransactionsBulk(userID uuid.UUID, transac
 	}()
 
 	for _, transactionID := range uniqueIDs {
+		if err := serv.ensureMirrorTransactionUpdateAllowed(userID, transactionID, req); err != nil {
+			return 0, err
+		}
 		pair, err := serv.getTransactionPairWithDB(dbTransaction, userID, transactionID)
 		if err != nil {
 			return 0, err
@@ -688,6 +694,13 @@ func (serv *transactionService) updateTransactionPair(db *gorm.DB, userID uuid.U
 }
 
 func (serv *transactionService) DeleteTransaction(userID uuid.UUID, transactionID uuid.UUID) error {
+	dto, err := serv.repo.GetDTOByID(nil, userID, transactionID)
+	if err != nil {
+		return err
+	}
+	if dto.IsInvestmentMirror {
+		return errors.ErrInvalidInputWithCode("transaction.linked_investment_operation.read_only", "linked mirrored transactions cannot be deleted directly", nil)
+	}
 
 	//create transaction and check if transfer
 	transactionPair, err := serv.getTransactionPair(userID, transactionID)
@@ -749,6 +762,20 @@ func (serv *transactionService) DeleteTransaction(userID uuid.UUID, transactionI
 	}
 
 	shouldCommit = true
+	return nil
+}
+
+func (serv *transactionService) ensureMirrorTransactionUpdateAllowed(userID, transactionID uuid.UUID, req UpdateTransactionRequest) error {
+	dto, err := serv.repo.GetDTOByID(nil, userID, transactionID)
+	if err != nil {
+		return err
+	}
+	if !dto.IsInvestmentMirror {
+		return nil
+	}
+	if req.Date != nil || req.CategoryCode != nil || req.Description != nil || req.Amount != nil || req.IsTransfer != nil || req.ExcludeFromDashboard != nil {
+		return errors.ErrInvalidInputWithCode("transaction.linked_investment_operation.protected_fields", "linked mirrored transaction fields are protected by the investment operation", nil)
+	}
 	return nil
 }
 

@@ -32,8 +32,12 @@ type Repository interface {
 	DeletePortfolioAsset(userID, portfolioID, assetID uuid.UUID) error
 	ReorderPortfolioAssets(userID, portfolioID uuid.UUID, codes []string) error
 	CreateOperation(db *gorm.DB, operation *Operation) (*Operation, error)
+	CreateOperationTransactionLinks(db *gorm.DB, links []*OperationTransactionLink) error
 	ListOperations(userID uuid.UUID) ([]OperationRow, error)
+	ListOperationsByDate(db *gorm.DB, userID uuid.UUID, date time.Time) ([]Operation, error)
 	GetOperationByID(userID, operationID uuid.UUID) (*Operation, error)
+	ListOperationTransactionLinks(db *gorm.DB, userID, operationID uuid.UUID) ([]OperationTransactionLink, error)
+	DeleteOperationTransactionLinks(db *gorm.DB, userID, operationID uuid.UUID) error
 	UpdateOperation(db *gorm.DB, userID, operationID uuid.UUID, update *UpdateOperationModel) (*Operation, error)
 	DeleteOperation(db *gorm.DB, userID, operationID uuid.UUID) error
 	ListAssetOperations(db *gorm.DB, userID, assetID uuid.UUID) ([]Operation, error)
@@ -68,15 +72,16 @@ type UpdatePortfolio struct {
 }
 
 type UpdateOperationModel struct {
-	AssetID       *uuid.UUID
-	OperationType *OperationType
-	Date          *time.Time
-	Quantity      *int64
-	UnitPrice     *int64
-	FeeAmount     *int64
-	GrossAmount   *int64
-	NetAmount     *int64
-	Notes         *string
+	AssetID                *uuid.UUID
+	OperationType          *OperationType
+	Date                   *time.Time
+	Quantity               *int64
+	UnitPrice              *int64
+	FeeAmount              *int64
+	OriginalTotalFeeAmount *int64
+	GrossAmount            *int64
+	NetAmount              *int64
+	Notes                  *string
 }
 
 type repository struct {
@@ -379,6 +384,13 @@ func (repo *repository) CreateOperation(db *gorm.DB, operation *Operation) (*Ope
 	return operation, nil
 }
 
+func (repo *repository) CreateOperationTransactionLinks(db *gorm.DB, links []*OperationTransactionLink) error {
+	if len(links) == 0 {
+		return nil
+	}
+	return repo.useDB(db).Create(links).Error
+}
+
 func (repo *repository) ListOperations(userID uuid.UUID) ([]OperationRow, error) {
 	rows := make([]OperationRow, 0)
 	err := repo.db.Raw(`
@@ -387,11 +399,17 @@ func (repo *repository) ListOperations(userID uuid.UUID) ([]OperationRow, error)
 			a.code AS asset_code,
 			a.name AS asset_name,
 			a.asset_type AS asset_type,
+			EXISTS (
+				SELECT 1
+				FROM investment_operation_transaction_links iotl
+				WHERE iotl.user_id = o.user_id AND iotl.investment_operation_id = o.id
+			) AS has_linked_mirror,
 			o.operation_type,
 			o.date,
 			o.quantity,
 			o.unit_price,
 			o.fee_amount,
+			o.original_total_fee_amount,
 			o.gross_amount,
 			o.net_amount,
 			o.notes,
@@ -405,6 +423,16 @@ func (repo *repository) ListOperations(userID uuid.UUID) ([]OperationRow, error)
 	return rows, err
 }
 
+func (repo *repository) ListOperationsByDate(db *gorm.DB, userID uuid.UUID, date time.Time) ([]Operation, error) {
+	var operations []Operation
+	err := repo.useDB(db).
+		Where("user_id = ? AND date = ?", userID, date).
+		Order("created_at ASC").
+		Order("id ASC").
+		Find(&operations).Error
+	return operations, err
+}
+
 func (repo *repository) GetOperationByID(userID, operationID uuid.UUID) (*Operation, error) {
 	var operation Operation
 	err := repo.db.Where("user_id = ? AND id = ?", userID, operationID).First(&operation).Error
@@ -415,6 +443,21 @@ func (repo *repository) GetOperationByID(userID, operationID uuid.UUID) (*Operat
 		return nil, err
 	}
 	return &operation, nil
+}
+
+func (repo *repository) ListOperationTransactionLinks(db *gorm.DB, userID, operationID uuid.UUID) ([]OperationTransactionLink, error) {
+	var links []OperationTransactionLink
+	err := repo.useDB(db).
+		Where("user_id = ? AND investment_operation_id = ?", userID, operationID).
+		Order("created_at ASC").
+		Find(&links).Error
+	return links, err
+}
+
+func (repo *repository) DeleteOperationTransactionLinks(db *gorm.DB, userID, operationID uuid.UUID) error {
+	return repo.useDB(db).
+		Where("user_id = ? AND investment_operation_id = ?", userID, operationID).
+		Delete(&OperationTransactionLink{}).Error
 }
 
 func (repo *repository) UpdateOperation(db *gorm.DB, userID, operationID uuid.UUID, update *UpdateOperationModel) (*Operation, error) {
@@ -436,6 +479,9 @@ func (repo *repository) UpdateOperation(db *gorm.DB, userID, operationID uuid.UU
 	}
 	if update.FeeAmount != nil {
 		updates["fee_amount"] = *update.FeeAmount
+	}
+	if update.OriginalTotalFeeAmount != nil {
+		updates["original_total_fee_amount"] = *update.OriginalTotalFeeAmount
 	}
 	if update.GrossAmount != nil {
 		updates["gross_amount"] = *update.GrossAmount

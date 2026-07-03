@@ -20,6 +20,7 @@ const TRANSACTION_OPERATION_OPTIONS = [
   { value: 'credit', labelKey: 'credit' },
   { value: 'debit', labelKey: 'debit' },
   { value: 'transfer', labelKey: 'transfer' },
+  { value: 'investment', labelKey: 'investment' },
 ] as const;
 
 @Component({
@@ -182,7 +183,7 @@ const TRANSACTION_OPERATION_OPTIONS = [
       } @else if (transactions().length === 0) {
         <p class="state-message">{{ messages.states.empty }}</p>
       } @else {
-        @if (selectedCount() > 0) {
+        @if (selectedCount() > 0 && !panelOpen() && !settingsPanelOpen()) {
           <div class="bulk-actions-bar" data-testid="bulk-actions-overlay">
             <div class="bulk-actions-left">
               <button
@@ -255,7 +256,25 @@ const TRANSACTION_OPERATION_OPTIONS = [
                   <td>{{ transferAccountName(tx) }}</td>
                   <td class="amount-cell">{{ money(tx.amount) }}</td>
                   <td class="actions-cell">
-                    <button class="icon-action" type="button" [title]="messages.actions.deleteTitle" [attr.aria-label]="messages.actions.deleteAria" (click)="$event.stopPropagation(); delete(tx)">
+                    @if (isInvestmentMirror(tx)) {
+                      <span
+                        class="icon-action mirror-indicator"
+                        title="Transação vinculada a uma operação de investimento"
+                        aria-label="Transação vinculada a uma operação de investimento"
+                      >
+                        <svg aria-hidden="true" viewBox="0 0 24 24">
+                          <path
+                            d="M10.5 13.5 8 16a3 3 0 1 1-4.24-4.24l3-3A3 3 0 0 1 11 8m2 8a3 3 0 0 0 4.24 0l3-3A3 3 0 1 0 16 8l-2.5 2.5m-3 3h3"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="1.8"
+                          />
+                        </svg>
+                      </span>
+                    }
+                    <button class="icon-action" type="button" [disabled]="isInvestmentMirror(tx)" [title]="deleteActionTitle(tx)" [attr.aria-label]="messages.actions.deleteAria" (click)="$event.stopPropagation(); delete(tx)">
                       <svg aria-hidden="true" viewBox="0 0 24 24">
                         <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-1 6h2v10H8V9Zm6 0h2v10h-2V9Zm-9 0h14l-1 12H6L5 9Z" />
                       </svg>
@@ -264,15 +283,6 @@ const TRANSACTION_OPERATION_OPTIONS = [
                 </tr>
               }
             </tbody>
-            @if (showPageTotal()) {
-              <tfoot>
-                <tr class="total-row">
-                  <td colspan="6">{{ totalLabel() }}</td>
-                  <td class="amount-cell">{{ money(displayedTotal()) }}</td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            }
           </table>
         </div>
         @if (pagination()) {
@@ -280,6 +290,12 @@ const TRANSACTION_OPERATION_OPTIONS = [
             <button class="ghost-button" type="button" [disabled]="loading() || page() <= 1" (click)="setPage(page() - 1)">{{ messages.actions.previous }}</button>
             <span>{{ messages.actions.page }} {{ pagination()?.page }} {{ messages.actions.of }} {{ pagination()?.total_pages || 1 }}</span>
             <button class="ghost-button" type="button" [disabled]="loading() || page() >= (pagination()?.total_pages || 1)" (click)="setPage(page() + 1)">{{ messages.actions.next }}</button>
+          </div>
+        }
+        @if (showPageTotal() && selectedCount() > 0) {
+          <div class="transactions-total-bar">
+            <span>{{ totalLabel() }}</span>
+            <strong>{{ money(displayedTotal()) }}</strong>
           </div>
         }
       }
@@ -292,6 +308,12 @@ const TRANSACTION_OPERATION_OPTIONS = [
           <button class="ghost-button" type="button" (click)="closePanel()">{{ messages.actions.close }}</button>
         </div>
         <form class="form-stack" [formGroup]="form" (ngSubmit)="save()">
+          @if (isEditingInvestmentMirror()) {
+            <p class="field-hint">{{ messages.form.linkedMirrorHint }}</p>
+          }
+          @if (isEditingLinkedMirrorSelection()) {
+            <p class="field-hint">{{ messages.form.linkedMirrorBulkHint }}</p>
+          }
           @if (!editingMany()) {
             <label>
               {{ messages.form.date }}
@@ -398,6 +420,16 @@ const TRANSACTION_OPERATION_OPTIONS = [
       font-size: 0.82rem;
       line-height: 1.45;
       margin-top: 6px;
+    }
+
+    .side-panel input:disabled,
+    .side-panel select:disabled,
+    .side-panel textarea:disabled {
+      background: #eef1f5;
+      border-color: #d5dce6;
+      color: #7b8798;
+      cursor: not-allowed;
+      opacity: 1;
     }
 
     .settings-button {
@@ -582,6 +614,15 @@ const TRANSACTION_OPERATION_OPTIONS = [
       cursor: pointer;
     }
 
+    .mirrored-row td {
+      background: #e8eefb;
+    }
+
+    .mirror-indicator {
+      color: #49639a;
+      cursor: default;
+    }
+
     .bulk-actions-bar {
       align-items: center;
       backdrop-filter: blur(10px);
@@ -632,6 +673,28 @@ const TRANSACTION_OPERATION_OPTIONS = [
       stroke-width: 1.8;
     }
 
+    .transactions-total-bar {
+      align-items: center;
+      backdrop-filter: blur(10px);
+      background: color-mix(in srgb, var(--surface) 88%, white 12%);
+      border: 1px solid color-mix(in srgb, var(--border) 80%, var(--accent) 20%);
+      border-radius: 14px;
+      bottom: 16px;
+      box-shadow: 0 16px 34px rgba(15, 23, 42, 0.14);
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      min-width: 260px;
+      padding: 10px 14px;
+      position: fixed;
+      right: 460px;
+      z-index: 29;
+    }
+
+    .transactions-total-bar strong {
+      font-size: 0.96rem;
+    }
+
     @media (max-width: 720px) {
       .bulk-actions-bar {
         border-radius: 18px;
@@ -639,6 +702,12 @@ const TRANSACTION_OPERATION_OPTIONS = [
         inset: auto 12px 12px 12px;
         max-width: none;
         padding: 10px;
+      }
+
+      .transactions-total-bar {
+        bottom: 12px;
+        min-width: min(260px, calc(100vw - 24px));
+        right: 12px;
       }
 
       .bulk-actions-left {
@@ -1007,6 +1076,10 @@ export class TransactionsComponent implements OnInit {
   }
 
   delete(tx: Transaction): void {
+    if (this.isInvestmentMirror(tx)) {
+      this.toast.error(this.messages.actions.deleteBlockedMirror);
+      return;
+    }
     if (!window.confirm(deleteTransactionConfirmationMessage(tx.description))) {
       return;
     }
@@ -1131,11 +1204,22 @@ export class TransactionsComponent implements OnInit {
     return Boolean(tx.account_transfer && tx.transfer_id);
   }
 
+  isInvestmentMirror(tx: Transaction): boolean {
+    return Boolean(tx.is_investment_operation_mirror);
+  }
+
   transactionRowClass(tx: Transaction): string {
+    const mirrorClass = this.isInvestmentMirror(tx) ? 'mirrored-row ' : '';
     if (this.isTransfer(tx)) {
-      return 'transfer-row';
+      return `${mirrorClass}transfer-row`.trim();
     }
-    return tx.amount >= 0 ? 'positive-row' : 'negative-row';
+    return `${mirrorClass}${tx.amount >= 0 ? 'positive-row' : 'negative-row'}`.trim();
+  }
+
+  deleteActionTitle(tx: Transaction): string {
+    return this.isInvestmentMirror(tx)
+      ? this.messages.actions.deleteBlockedMirror
+      : this.messages.actions.deleteTitle;
   }
 
   leafCategories() {
@@ -1514,15 +1598,16 @@ export class TransactionsComponent implements OnInit {
     const value = this.form.getRawValue();
     const payload: BulkTransactionUpdatePayload = { ids: selectedIds };
     const baseline = this.formBaseline;
+    const linkedSelection = this.selectedSelectionIncludesInvestmentMirror();
 
     if (value.account_code) {
       payload.account_code = value.account_code;
     }
-    if (value.category_code) {
+    if (!linkedSelection && value.category_code) {
       payload.category_code = value.category_code;
     }
 
-    if (value.is_transfer !== baseline.is_transfer) {
+    if (!linkedSelection && value.is_transfer !== baseline.is_transfer) {
       payload.is_transfer = value.is_transfer;
       if (!value.is_transfer) {
         payload.account_transfer = null;
@@ -1538,7 +1623,7 @@ export class TransactionsComponent implements OnInit {
       }
     }
 
-    if (!value.is_transfer && this.form.controls.exclude_from_dashboard.dirty) {
+    if (!linkedSelection && !value.is_transfer && this.form.controls.exclude_from_dashboard.dirty) {
       payload.exclude_from_dashboard = value.exclude_from_dashboard;
     }
 
@@ -1571,6 +1656,7 @@ export class TransactionsComponent implements OnInit {
     this.form.controls.date.updateValueAndValidity({ emitEvent: false });
     this.form.controls.description.updateValueAndValidity({ emitEvent: false });
     this.form.controls.amount.updateValueAndValidity({ emitEvent: false });
+    this.syncMirrorFieldState();
   }
 
   private toggleControlState(controlName: 'date' | 'description' | 'amount', enabled: boolean): void {
@@ -1623,6 +1709,50 @@ export class TransactionsComponent implements OnInit {
     }
   }
 
+  isEditingInvestmentMirror(): boolean {
+    const editing = this.editing();
+    return this.editMode() === 'edit-single' && !!editing && this.isInvestmentMirror(editing);
+  }
+
+  isEditingLinkedMirrorSelection(): boolean {
+    return this.editMode() === 'edit-multi' && this.selectedSelectionIncludesInvestmentMirror();
+  }
+
+  private syncMirrorFieldState(): void {
+    const editingMirror = this.isEditingInvestmentMirror();
+    const linkedBulkSelection = this.isEditingLinkedMirrorSelection();
+    const protectedControls: Array<'date' | 'description' | 'amount' | 'category_code' | 'is_transfer' | 'exclude_from_dashboard'> = [
+      'date',
+      'description',
+      'amount',
+      'category_code',
+      'is_transfer',
+      'exclude_from_dashboard',
+    ];
+
+    for (const controlName of protectedControls) {
+      const control = this.form.controls[controlName];
+      if (editingMirror || (linkedBulkSelection && controlName !== 'date' && controlName !== 'description' && controlName !== 'amount')) {
+        control.disable({ emitEvent: false });
+      } else if (controlName === 'date' || controlName === 'description' || controlName === 'amount') {
+        if (this.editMode() !== 'edit-multi') {
+          control.enable({ emitEvent: false });
+        }
+      } else {
+        control.enable({ emitEvent: false });
+      }
+    }
+
+    if (editingMirror || linkedBulkSelection) {
+      this.form.controls.account_code.enable({ emitEvent: false });
+      this.form.controls.account_transfer.enable({ emitEvent: false });
+    }
+  }
+
+  private selectedSelectionIncludesInvestmentMirror(): boolean {
+    return this.selectedTransactions().some((tx) => this.isInvestmentMirror(tx));
+  }
+
   private hasMixedTransferSelection(transactions: Transaction[]): boolean {
     const transferCount = transactions.filter((tx) => this.isTransfer(tx)).length;
     return transferCount > 0 && transferCount < transactions.length;
@@ -1644,7 +1774,7 @@ export class TransactionsComponent implements OnInit {
 type TransactionSortColumn = 'DATE' | 'AMOUNT';
 type SortDirection = 'asc' | 'desc';
 type FilterMenuType = 'account' | 'category' | 'operation';
-type TransactionOperationFilter = 'credit' | 'debit' | 'transfer';
+type TransactionOperationFilter = 'credit' | 'debit' | 'transfer' | 'investment';
 type AccountFilterGroup = {
   key: string;
   label: string | null;

@@ -89,7 +89,7 @@ func CheckOperationQueryParam(operationTypes []string) error {
 	if len(operationTypes) > 0 {
 		for _, op := range operationTypes {
 			switch op {
-			case string(CreditOperation), string(DebitOperation), string(TransferOperation):
+			case string(CreditOperation), string(DebitOperation), string(TransferOperation), string(InvestmentOperation):
 			default:
 				return errors.ErrInvalidInputWithCode("transaction.filter.operation.invalid", "invalid operation type", nil)
 			}

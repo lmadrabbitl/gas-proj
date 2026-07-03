@@ -843,10 +843,22 @@ func (r *serviceTestRepo) ReorderPortfolioAssets(userID, portfolioID uuid.UUID, 
 func (r *serviceTestRepo) CreateOperation(db *gorm.DB, operation *Operation) (*Operation, error) {
 	panic("unexpected call")
 }
+func (r *serviceTestRepo) CreateOperationTransactionLinks(db *gorm.DB, links []*OperationTransactionLink) error {
+	panic("unexpected call")
+}
 func (r *serviceTestRepo) ListOperations(userID uuid.UUID) ([]OperationRow, error) {
 	panic("unexpected call")
 }
+func (r *serviceTestRepo) ListOperationsByDate(db *gorm.DB, userID uuid.UUID, date time.Time) ([]Operation, error) {
+	panic("unexpected call")
+}
 func (r *serviceTestRepo) GetOperationByID(userID, operationID uuid.UUID) (*Operation, error) {
+	panic("unexpected call")
+}
+func (r *serviceTestRepo) ListOperationTransactionLinks(db *gorm.DB, userID, operationID uuid.UUID) ([]OperationTransactionLink, error) {
+	panic("unexpected call")
+}
+func (r *serviceTestRepo) DeleteOperationTransactionLinks(db *gorm.DB, userID, operationID uuid.UUID) error {
 	panic("unexpected call")
 }
 func (r *serviceTestRepo) UpdateOperation(db *gorm.DB, userID, operationID uuid.UUID, update *UpdateOperationModel) (*Operation, error) {

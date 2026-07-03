@@ -36,9 +36,13 @@ func (r *inMemoryUserRepo) CreateUser(user *User) (*User, error) {
 	return user, nil
 }
 
+func (r *inMemoryUserRepo) CreateUserWithDB(_ *gorm.DB, user *User) (*User, error) {
+	return r.CreateUser(user)
+}
+
 func TestCreateUserHashesPasswordAndNormalizesFields(t *testing.T) {
 	repo := newInMemoryUserRepo()
-	service := NewService("secret", repo)
+	service := NewService("secret", repo, nil, nil)
 
 	user, err := service.CreateUser("  Test User  ", "  TEST@User.com ", "password123")
 	if err != nil {
@@ -64,7 +68,7 @@ func TestCreateUserHashesPasswordAndNormalizesFields(t *testing.T) {
 
 func TestLoginUserNormalizesEmail(t *testing.T) {
 	repo := newInMemoryUserRepo()
-	service := NewService("secret", repo)
+	service := NewService("secret", repo, nil, nil)
 
 	createdUser, err := service.CreateUser("Test User", "test@user.com", "password123")
 	if err != nil {
@@ -87,7 +91,7 @@ func TestLoginUserNormalizesEmail(t *testing.T) {
 }
 
 func TestLoginUserReturnsInvalidCredentialsForUnknownEmail(t *testing.T) {
-	service := NewService("secret", newInMemoryUserRepo())
+	service := NewService("secret", newInMemoryUserRepo(), nil, nil)
 
 	_, err := service.LoginUser("missing@user.com", "password123")
 	if err == nil {
@@ -106,7 +110,7 @@ func TestLoginUserReturnsInvalidCredentialsForUnknownEmail(t *testing.T) {
 
 func TestLoginUserReturnsInvalidCredentialsForWrongPassword(t *testing.T) {
 	repo := newInMemoryUserRepo()
-	service := NewService("secret", repo)
+	service := NewService("secret", repo, nil, nil)
 
 	user, err := service.CreateUser("Test User", "test@user.com", "password123")
 	if err != nil {
@@ -133,7 +137,7 @@ func TestLoginUserReturnsInvalidCredentialsForWrongPassword(t *testing.T) {
 }
 
 func TestGenerateAndValidateTokenRoundTrip(t *testing.T) {
-	service := NewService("secret", newInMemoryUserRepo())
+	service := NewService("secret", newInMemoryUserRepo(), nil, nil)
 	expectedUserID := uuid.New()
 
 	token, err := service.GenerateToken(expectedUserID)
@@ -152,7 +156,7 @@ func TestGenerateAndValidateTokenRoundTrip(t *testing.T) {
 }
 
 func TestValidateTokenRejectsTamperedToken(t *testing.T) {
-	service := NewService("secret", newInMemoryUserRepo())
+	service := NewService("secret", newInMemoryUserRepo(), nil, nil)
 	userID := uuid.New()
 
 	token, err := service.GenerateToken(userID)
@@ -167,7 +171,7 @@ func TestValidateTokenRejectsTamperedToken(t *testing.T) {
 }
 
 func TestValidateTokenRejectsTokenWithoutUserIDStringClaim(t *testing.T) {
-	service := NewService("secret", newInMemoryUserRepo()).(*service)
+	service := NewService("secret", newInMemoryUserRepo(), nil, nil).(*service)
 
 	badToken, err := jwtTokenWithNonStringUserID(service.secretkey)
 	if err != nil {

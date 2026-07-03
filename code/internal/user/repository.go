@@ -11,6 +11,7 @@ import (
 type Repository interface {
 	GetByEmail(string) (*User, error)
 	CreateUser(user *User) (*User, error)
+	CreateUserWithDB(db *gorm.DB, user *User) (*User, error)
 }
 
 type repository struct {
@@ -30,8 +31,11 @@ func (r *repository) GetByEmail(email string) (*User, error) {
 }
 
 func (r *repository) CreateUser(user *User) (*User, error) {
+	return r.CreateUserWithDB(r.db, user)
+}
 
-	if err := r.db.Create(user).Error; err != nil {
+func (r *repository) CreateUserWithDB(db *gorm.DB, user *User) (*User, error) {
+	if err := db.Create(user).Error; err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, appErr.ErrDuplicateUser()

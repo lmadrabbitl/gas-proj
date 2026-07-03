@@ -430,6 +430,30 @@ func TestServiceUpdateCategoryRejectsDeactivatedCategory(t *testing.T) {
 	}
 }
 
+func TestServiceUpdateCategoryRejectsPermanentCategory(t *testing.T) {
+	t.Parallel()
+
+	name := "Updated"
+	service := NewService(&categoryRepoStub{
+		getByCodeFn: func(userID uuid.UUID, code string, getDeactivated bool) (*Category, error) {
+			return &Category{ID: uuid.New(), Code: PermanentInvestmentMovementCode}, nil
+		},
+		updateFn: func(userID uuid.UUID, code string, category *UpdateCategory) (*Category, error) {
+			t.Fatal("expected repository update not to be called for permanent category")
+			return nil, nil
+		},
+	})
+
+	_, err := service.UpdateCategory(uuid.New(), PermanentInvestmentMovementCode, UpdateCategoryRequest{Name: &name})
+	if err == nil {
+		t.Fatal("expected permanent category update to fail")
+	}
+	var appError *appErr.AppError
+	if !errors.As(err, &appError) || appError.Code != "category.permanent.read_only" {
+		t.Fatalf("expected category.permanent.read_only, got %v", err)
+	}
+}
+
 func TestServiceUpdateCategoryResolvesParentCode(t *testing.T) {
 	t.Parallel()
 
@@ -820,6 +844,33 @@ func TestServiceDeactivateCategoryNormalizesCode(t *testing.T) {
 	}
 	if gotCode != "income" {
 		t.Fatalf("expected lowercase deactivate code, got %q", gotCode)
+	}
+}
+
+func TestServiceDeactivateCategoryRejectsPermanentCategory(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(&categoryRepoStub{
+		getByCodeFn: func(userID uuid.UUID, code string, getDeactivated bool) (*Category, error) {
+			return &Category{ID: uuid.New(), Code: PermanentMovementRootCode}, nil
+		},
+		getByParentFn: func(userID, parentID uuid.UUID, getDeactivated bool) ([]Category, error) {
+			t.Fatal("expected child lookup not to run for permanent category")
+			return nil, nil
+		},
+		deactivateFn: func(userID uuid.UUID, code string) error {
+			t.Fatal("expected deactivate not to be called for permanent category")
+			return nil
+		},
+	})
+
+	err := service.DeactivateCategory(uuid.New(), PermanentMovementRootCode)
+	if err == nil {
+		t.Fatal("expected permanent category deactivate to fail")
+	}
+	var appError *appErr.AppError
+	if !errors.As(err, &appError) || appError.Code != "category.permanent.read_only" {
+		t.Fatalf("expected category.permanent.read_only, got %v", err)
 	}
 }
 

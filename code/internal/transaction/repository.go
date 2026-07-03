@@ -46,10 +46,11 @@ type OperationTransaction string
 const CreditOperation OperationTransaction = "credit"
 const DebitOperation OperationTransaction = "debit"
 const TransferOperation OperationTransaction = "transfer"
+const InvestmentOperation OperationTransaction = "investment"
 
 func (t OperationTransaction) IsValid() bool {
 	switch t {
-	case CreditOperation, DebitOperation, TransferOperation:
+	case CreditOperation, DebitOperation, TransferOperation, InvestmentOperation:
 		return true
 	default:
 		return false
@@ -64,6 +65,8 @@ func NewOperationTransaction(op string) (OperationTransaction, bool) {
 		return DebitOperation, true
 	case string(TransferOperation):
 		return TransferOperation, true
+	case string(InvestmentOperation):
+		return InvestmentOperation, true
 	default:
 		return "", false
 	}
@@ -405,11 +408,15 @@ func (repo *repository) baseQueryWithCodes(db *gorm.DB) *gorm.DB {
 			t.amount,
 			t.transfer_id, 
 			a2.code as transfer_account_code,
-			t.exclude_from_dashboard
+			t.exclude_from_dashboard,
+			CASE WHEN iotl.transaction_id IS NOT NULL THEN TRUE ELSE FALSE END AS is_investment_operation_mirror,
+			iotl.investment_operation_id,
+			iotl.role AS investment_operation_link_role
 		`).
 		Joins("JOIN accounts a ON a.id = t.account_id").
 		Joins("JOIN categories c ON c.id = t.category_id").
-		Joins("LEFT JOIN accounts a2 ON a2.id = t.transfer_account_id")
+		Joins("LEFT JOIN accounts a2 ON a2.id = t.transfer_account_id").
+		Joins("LEFT JOIN investment_operation_transaction_links iotl ON iotl.transaction_id = t.id AND iotl.user_id = t.user_id")
 }
 
 func mapPGError(err error) error {
@@ -556,6 +563,8 @@ func buildOperationConditions(operations []OperationTransaction) []string {
 			conditions = append(conditions, "t.amount < 0 AND t.transfer_id IS NULL")
 		case TransferOperation:
 			conditions = append(conditions, "t.transfer_id IS NOT NULL")
+		case InvestmentOperation:
+			conditions = append(conditions, "iotl.transaction_id IS NOT NULL")
 		}
 	}
 

@@ -12,12 +12,14 @@ func TestBuildOperationConditionsReturnsGroupedClausesForValidOperations(t *test
 		CreditOperation,
 		DebitOperation,
 		TransferOperation,
+		InvestmentOperation,
 	})
 
 	want := []string{
 		"t.amount > 0 AND t.transfer_id IS NULL",
 		"t.amount < 0 AND t.transfer_id IS NULL",
 		"t.transfer_id IS NOT NULL",
+		"iotl.transaction_id IS NOT NULL",
 	}
 
 	if !reflect.DeepEqual(got, want) {
