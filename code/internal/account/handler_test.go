@@ -129,6 +129,9 @@ func TestHandlerCreateAccountMapsRequestToService(t *testing.T) {
 	if gotReq.Type != AccountTypeAsset {
 		t.Fatalf("expected account type %q, got %q", AccountTypeAsset, gotReq.Type)
 	}
+	if gotReq.AssetRole != AccountAssetRoleNormal {
+		t.Fatalf("expected default asset role %q, got %q", AccountAssetRoleNormal, gotReq.AssetRole)
+	}
 	if !gotReq.HideFromDashboard {
 		t.Fatal("expected hide_from_dashboard to be forwarded")
 	}
@@ -168,6 +171,35 @@ func TestHandlerUpdateAccountRejectsInvalidType(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "validation.type.needs.to.be.asset.or.liability") {
 		t.Fatalf("expected validation.type.needs.to.be.asset.or.liability response, got body: %s", w.Body.String())
+	}
+}
+
+func TestHandlerUpdateAccountRejectsInvalidAssetRole(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+
+	service := &accountServiceStub{
+		updateAccountFn: func(userID uuid.UUID, code string, req UpdateAccountRequest) (*Account, error) {
+			t.Fatal("expected service not to be called for invalid asset role")
+			return nil, nil
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("userID", uuid.New())
+	c.Params = []gin.Param{{Key: "code", Value: "cash"}}
+	c.Request = httptest.NewRequest(http.MethodPatch, "/accounts/cash", bytes.NewBufferString(`{"asset_role":"OTHER"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	NewHandler(service).UpdateAccount(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "validation.asset.role.needs.to.be.normal.brokerage.or.investment") {
+		t.Fatalf("expected asset role validation response, got body: %s", w.Body.String())
 	}
 }
 

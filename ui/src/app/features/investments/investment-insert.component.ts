@@ -413,7 +413,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
         this.assets.set(assets);
         this.positions.set(positions);
         this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
-        this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.is_brokerage_account));
+        this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'BROKERAGE'));
       },
       error: (error) => this.toast.error(getApiErrorMessage(error)),
     });
@@ -874,7 +874,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
             this.assets.set(assets);
             this.positions.set(positions);
             this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
-            this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.is_brokerage_account));
+            this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'BROKERAGE'));
           },
           error: (error) => this.toast.error(getApiErrorMessage(error)),
         });

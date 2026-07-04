@@ -540,7 +540,7 @@ export const uiMessages = {
       sortOrder: 'Ordem',
       name: 'Nome',
       type: 'Tipo',
-      brokerage: 'Invest.',
+      assetRole: 'Finalidade',
       balance: 'Saldo',
       currency: 'Moeda',
       dashboard: 'Painel',
@@ -566,9 +566,12 @@ export const uiMessages = {
       name: 'Nome',
       type: 'Tipo',
       currency: 'Moeda',
-      isBrokerageAccount: 'Conta de investimento',
-      isBrokerageAccountHint:
-        'Marque quando a conta representar o saldo usado para comprar, vender e receber eventos dos investimentos.',
+      assetRole: 'Finalidade da conta',
+      assetRoleHint:
+        'Use Corretora para conta de corretora e Investimento para um destino agregado de investimentos. Passivos sempre ficam como Normal.',
+      assetRoleNormal: 'Normal',
+      assetRoleBrokerage: 'Corretora',
+      assetRoleInvestment: 'Investimento',
       hideFromDashboard: 'Ocultar do painel',
       hideFromDashboardHint:
         'Use para contas de investimento que não devem entrar no saldo consolidado do dashboard.',
@@ -579,9 +582,10 @@ export const uiMessages = {
       visible: 'Visível',
       hidden: 'Oculta',
     },
-    brokerage: {
-      yes: 'Sim',
-      no: 'Não',
+    assetRole: {
+      normal: 'Normal',
+      brokerage: 'Corretora',
+      investment: 'Investimento',
     },
   },
   categories: {

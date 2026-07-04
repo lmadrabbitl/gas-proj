@@ -128,6 +128,9 @@ func TestServiceAddAccountGeneratesCodeAndDelegates(t *testing.T) {
 	if !created.HideFromDashboard {
 		t.Fatal("expected hide_from_dashboard to be preserved")
 	}
+	if created.AssetRole != AccountAssetRoleNormal {
+		t.Fatalf("expected default asset role %q, got %q", AccountAssetRoleNormal, created.AssetRole)
+	}
 	if created.SortOrder == nil || *created.SortOrder != 7 {
 		t.Fatalf("expected service to assign sort order 7, got %+v", created.SortOrder)
 	}
@@ -215,6 +218,71 @@ func TestServiceAddAccountAllowsReuseOfDeactivatedNameAndNormalizesAccents(t *te
 	}
 	if created == nil || created.Code != "cartao-bradesco-2" {
 		t.Fatalf("expected accent-normalized code with suffix, got %+v", created)
+	}
+	if created.AssetRole != AccountAssetRoleNormal {
+		t.Fatalf("expected liability account asset role to normalize to %q, got %q", AccountAssetRoleNormal, created.AssetRole)
+	}
+}
+
+func TestServiceAddAccountAllowsExplicitBrokerageRoleForAssets(t *testing.T) {
+	t.Parallel()
+
+	var created *Account
+	service := NewService(&accountRepoStub{
+		getByUserFn: func(userID uuid.UUID) ([]Account, error) {
+			return []Account{}, nil
+		},
+		getNextSortFn: func(userID uuid.UUID) (int, error) {
+			return 1, nil
+		},
+		createFn: func(account *Account) (*Account, error) {
+			created = account
+			return account, nil
+		},
+	})
+
+	_, err := service.AddAccount(uuid.New(), CreateAccountRequest{
+		Name:      "Clear",
+		Type:      AccountTypeAsset,
+		Currency:  "BRL",
+		AssetRole: AccountAssetRoleBrokerage,
+	})
+	if err != nil {
+		t.Fatalf("expected create to succeed, got %v", err)
+	}
+	if created == nil || created.AssetRole != AccountAssetRoleBrokerage {
+		t.Fatalf("expected asset role %q, got %+v", AccountAssetRoleBrokerage, created)
+	}
+}
+
+func TestServiceAddAccountNormalizesRoleForLiability(t *testing.T) {
+	t.Parallel()
+
+	var created *Account
+	service := NewService(&accountRepoStub{
+		getByUserFn: func(userID uuid.UUID) ([]Account, error) {
+			return []Account{}, nil
+		},
+		getNextSortFn: func(userID uuid.UUID) (int, error) {
+			return 1, nil
+		},
+		createFn: func(account *Account) (*Account, error) {
+			created = account
+			return account, nil
+		},
+	})
+
+	_, err := service.AddAccount(uuid.New(), CreateAccountRequest{
+		Name:      "Cartao",
+		Type:      AccountTypeLiability,
+		Currency:  "BRL",
+		AssetRole: AccountAssetRoleInvestment,
+	})
+	if err != nil {
+		t.Fatalf("expected create to succeed, got %v", err)
+	}
+	if created == nil || created.AssetRole != AccountAssetRoleNormal {
+		t.Fatalf("expected liability account asset role to normalize to %q, got %+v", AccountAssetRoleNormal, created)
 	}
 }
 
@@ -369,6 +437,7 @@ func TestServiceUpdateAccountBuildsEditableFieldsOnly(t *testing.T) {
 	name := "Updated"
 	currency := "USD"
 	accountType := AccountTypeLiability
+	assetRole := AccountAssetRoleInvestment
 	hide := true
 
 	var updatedPayload *UpdateAccount
@@ -390,7 +459,7 @@ func TestServiceUpdateAccountBuildsEditableFieldsOnly(t *testing.T) {
 			}
 			gotCode = code
 			updatedPayload = account
-			return &Account{UserID: gotUserID, Code: code, Name: *account.Name, Currency: *account.Currency, Type: *account.Type, HideFromDashboard: *account.HideFromDashboard}, nil
+			return &Account{UserID: gotUserID, Code: code, Name: *account.Name, Currency: *account.Currency, Type: *account.Type, AssetRole: *account.AssetRole, HideFromDashboard: *account.HideFromDashboard}, nil
 		},
 	})
 
@@ -398,6 +467,7 @@ func TestServiceUpdateAccountBuildsEditableFieldsOnly(t *testing.T) {
 		Name:              &name,
 		Currency:          &currency,
 		Type:              &accountType,
+		AssetRole:         &assetRole,
 		HideFromDashboard: &hide,
 	})
 	if err != nil {
@@ -414,6 +484,9 @@ func TestServiceUpdateAccountBuildsEditableFieldsOnly(t *testing.T) {
 	}
 	if updatedPayload.Type == nil || *updatedPayload.Type != accountType {
 		t.Fatal("expected update payload to include type")
+	}
+	if updatedPayload.AssetRole == nil || *updatedPayload.AssetRole != AccountAssetRoleNormal {
+		t.Fatalf("expected liability update payload to normalize asset role to %q, got %+v", AccountAssetRoleNormal, updatedPayload.AssetRole)
 	}
 	if updatedPayload.HideFromDashboard == nil || *updatedPayload.HideFromDashboard != hide {
 		t.Fatal("expected update payload to include hide_from_dashboard")

@@ -1,5 +1,7 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { startWith } from 'rxjs';
 
 import { AccountsService } from '../../data/accounts.service';
 import { ReferenceDataService } from '../../data/reference-data.service';
@@ -11,7 +13,7 @@ import {
   deleteAccountPermanentConfirmationMessage,
 } from '../../shared/messages';
 import { MoneyVisibilityService } from '../../shared/money-visibility.service';
-import { Account, AccountType } from '../../shared/models';
+import { Account, AccountAssetRole, AccountType } from '../../shared/models';
 import { ToastService } from '../../shared/toast.service';
 
 @Component({
@@ -44,7 +46,7 @@ import { ToastService } from '../../shared/toast.service';
                     <th>{{ messages.columns.sortOrder }}</th>
                     <th>{{ messages.columns.name }}</th>
                     <th>{{ messages.columns.type }}</th>
-                    <th>{{ messages.columns.brokerage }}</th>
+                    <th>{{ messages.columns.assetRole }}</th>
                     <th>{{ messages.columns.dashboard }}</th>
                     <th>{{ messages.columns.balance }}</th>
                     <th>{{ messages.columns.currency }}</th>
@@ -75,7 +77,7 @@ import { ToastService } from '../../shared/toast.service';
                       <td>{{ displaySortOrder(account) }}</td>
                       <td>{{ displayAccountName(account) }}</td>
                       <td>{{ accountType(account.Type) }}</td>
-                      <td>{{ brokerageLabel(account) }}</td>
+                      <td>{{ assetRoleLabel(account) }}</td>
                       <td>{{ dashboardVisibility(account) }}</td>
                       <td>{{ money(account.Balance) }}</td>
                       <td>{{ account.Currency }}</td>
@@ -105,7 +107,7 @@ import { ToastService } from '../../shared/toast.service';
                   <tr>
                     <th>{{ messages.columns.name }}</th>
                     <th>{{ messages.columns.type }}</th>
-                    <th>{{ messages.columns.brokerage }}</th>
+                    <th>{{ messages.columns.assetRole }}</th>
                     <th>{{ messages.columns.balance }}</th>
                     <th>{{ messages.columns.currency }}</th>
                     <th>{{ messages.columns.deactivatedAt }}</th>
@@ -117,7 +119,7 @@ import { ToastService } from '../../shared/toast.service';
                     <tr [class.liability-row]="isLiability(account)">
                       <td>{{ displayAccountName(account) }}</td>
                       <td>{{ accountType(account.Type) }}</td>
-                      <td>{{ brokerageLabel(account) }}</td>
+                      <td>{{ assetRoleLabel(account) }}</td>
                       <td>{{ money(account.Balance) }}</td>
                       <td>{{ account.Currency }}</td>
                       <td>{{ deactivatedLabel(account) }}</td>
@@ -166,11 +168,15 @@ import { ToastService } from '../../shared/toast.service';
             {{ messages.form.currency }}
             <input formControlName="currency" maxlength="3" />
           </label>
-          <label class="checkbox-label">
-            <input type="checkbox" formControlName="is_brokerage_account" />
-            {{ messages.form.isBrokerageAccount }}
+          <label>
+            {{ messages.form.assetRole }}
+            <select formControlName="asset_role">
+              <option value="NORMAL">{{ messages.form.assetRoleNormal }}</option>
+              <option value="BROKERAGE">{{ messages.form.assetRoleBrokerage }}</option>
+              <option value="INVESTMENT">{{ messages.form.assetRoleInvestment }}</option>
+            </select>
           </label>
-          <p class="section-note checkbox-hint">{{ messages.form.isBrokerageAccountHint }}</p>
+          <p class="section-note checkbox-hint">{{ messages.form.assetRoleHint }}</p>
           <label class="checkbox-label">
             <input type="checkbox" formControlName="hide_from_dashboard" />
             {{ messages.form.hideFromDashboard }}
@@ -218,6 +224,14 @@ import { ToastService } from '../../shared/toast.service';
       margin-top: -8px;
     }
 
+    .form-stack select:disabled,
+    .form-stack input:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      background: color-mix(in srgb, var(--surface-soft) 82%, var(--surface) 18%);
+      color: var(--text-muted);
+    }
+
     .inactive-accounts-table th,
     .inactive-accounts-table td {
       white-space: nowrap;
@@ -238,6 +252,7 @@ import { ToastService } from '../../shared/toast.service';
 })
 export class AccountsComponent implements OnInit {
   private readonly fb = inject(FormBuilder);
+  private readonly destroyRef = inject(DestroyRef);
   readonly messages = uiMessages.accounts;
   readonly commonMessages = uiMessages.common;
   readonly loading = signal(true);
@@ -255,7 +270,7 @@ export class AccountsComponent implements OnInit {
     name: this.fb.nonNullable.control('', Validators.required),
     type: this.fb.nonNullable.control<AccountType>('ASSET', Validators.required),
     currency: this.fb.nonNullable.control('BRL', Validators.required),
-    is_brokerage_account: this.fb.nonNullable.control(false),
+    asset_role: this.fb.nonNullable.control<AccountAssetRole>('NORMAL'),
     hide_from_dashboard: this.fb.nonNullable.control(false),
   });
 
@@ -267,6 +282,7 @@ export class AccountsComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
+    this.watchAccountType();
     this.load();
   }
 
@@ -287,7 +303,7 @@ export class AccountsComponent implements OnInit {
 
   openCreate(): void {
     this.editing.set(null);
-    this.form.reset({ name: '', type: 'ASSET', currency: 'BRL', is_brokerage_account: false, hide_from_dashboard: false });
+    this.form.reset({ name: '', type: 'ASSET', currency: 'BRL', asset_role: 'NORMAL', hide_from_dashboard: false });
     this.panelOpen.set(true);
   }
 
@@ -297,7 +313,7 @@ export class AccountsComponent implements OnInit {
       name: account.Name,
       type: account.Type,
       currency: account.Currency,
-      is_brokerage_account: account.is_brokerage_account,
+      asset_role: account.asset_role,
       hide_from_dashboard: account.hide_from_dashboard,
     });
     this.panelOpen.set(true);
@@ -315,19 +331,20 @@ export class AccountsComponent implements OnInit {
     this.saving.set(true);
     const value = this.form.getRawValue();
     const editing = this.editing();
+    const assetRole = value.type === 'ASSET' ? value.asset_role : 'NORMAL';
     const request = this.editing()
       ? this.accountsService.update(editing!.Code, {
           name: value.name,
           type: value.type,
           currency: value.currency.toUpperCase(),
-          is_brokerage_account: value.is_brokerage_account,
+          asset_role: assetRole,
           hide_from_dashboard: value.hide_from_dashboard,
         })
       : this.accountsService.create({
           name: value.name,
           type: value.type,
           currency: value.currency.toUpperCase(),
-          is_brokerage_account: value.is_brokerage_account,
+          asset_role: assetRole,
           hide_from_dashboard: value.hide_from_dashboard,
         });
 
@@ -404,8 +421,18 @@ export class AccountsComponent implements OnInit {
     return account.hide_from_dashboard ? this.messages.dashboard.hidden : this.messages.dashboard.visible;
   }
 
-  brokerageLabel(account: Account): string {
-    return account.is_brokerage_account ? this.messages.brokerage.yes : this.messages.brokerage.no;
+  assetRoleLabel(account: Account): string {
+    if (account.Type !== 'ASSET') {
+      return this.messages.assetRole.normal;
+    }
+    switch (account.asset_role) {
+      case 'BROKERAGE':
+        return this.messages.assetRole.brokerage;
+      case 'INVESTMENT':
+        return this.messages.assetRole.investment;
+      default:
+        return this.messages.assetRole.normal;
+    }
   }
 
   displayAccountName(account: Account): string {
@@ -501,5 +528,22 @@ export class AccountsComponent implements OnInit {
     }));
 
     return [...normalizedActive, ...inactiveAccounts];
+  }
+
+  private watchAccountType(): void {
+    this.form.controls.type.valueChanges
+      .pipe(
+        startWith(this.form.controls.type.getRawValue()),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((type) => {
+        if (type === 'ASSET') {
+          this.form.controls.asset_role.enable({ emitEvent: false });
+          return;
+        }
+
+        this.form.controls.asset_role.setValue('NORMAL', { emitEvent: false });
+        this.form.controls.asset_role.disable({ emitEvent: false });
+      });
   }
 }

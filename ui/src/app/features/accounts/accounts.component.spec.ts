@@ -18,6 +18,7 @@ describe('AccountsComponent', () => {
       Type: 'ASSET' as const,
       Balance: 100000,
       Currency: 'BRL',
+      asset_role: 'BROKERAGE' as const,
       hide_from_dashboard: true,
       CreatedAt: '2026-01-01T00:00:00Z',
       UpdatedAt: '2026-01-01T00:00:00Z',
@@ -31,6 +32,7 @@ describe('AccountsComponent', () => {
       Type: 'LIABILITY' as const,
       Balance: -5000,
       Currency: 'BRL',
+      asset_role: 'NORMAL' as const,
       hide_from_dashboard: false,
       CreatedAt: '2026-01-01T00:00:00Z',
       UpdatedAt: '2026-01-01T00:00:00Z',
@@ -44,6 +46,7 @@ describe('AccountsComponent', () => {
       Type: 'ASSET' as const,
       Balance: 0,
       Currency: 'BRL',
+      asset_role: 'NORMAL' as const,
       hide_from_dashboard: false,
       CreatedAt: '2026-01-01T00:00:00Z',
       UpdatedAt: '2026-01-01T00:00:00Z',
@@ -57,6 +60,7 @@ describe('AccountsComponent', () => {
       Type: 'ASSET' as const,
       Balance: 0,
       Currency: 'BRL',
+      asset_role: 'NORMAL' as const,
       hide_from_dashboard: false,
       CreatedAt: '2026-06-02T00:00:00Z',
       UpdatedAt: '2026-06-02T00:00:00Z',
@@ -162,8 +166,31 @@ describe('AccountsComponent', () => {
       name: 'Bradesco',
       type: 'ASSET',
       currency: 'BRL',
+      asset_role: 'NORMAL',
       hide_from_dashboard: true,
     });
+  });
+
+  it('disables asset role for liability accounts', () => {
+    const fixture = TestBed.createComponent(AccountsComponent);
+    const component = fixture.componentInstance;
+
+    component.openEdit(accountsSignal()[1]);
+
+    expect(component.form.controls.asset_role.disabled).toBe(true);
+    expect(component.form.controls.asset_role.getRawValue()).toBe('NORMAL');
+  });
+
+  it('resets asset role to normal when switching to liability', () => {
+    const fixture = TestBed.createComponent(AccountsComponent);
+    const component = fixture.componentInstance;
+
+    component.openEdit(accountsSignal()[0]);
+    component.form.patchValue({ asset_role: 'BROKERAGE' });
+    component.form.patchValue({ type: 'LIABILITY' });
+
+    expect(component.form.controls.asset_role.disabled).toBe(true);
+    expect(component.form.controls.asset_role.getRawValue()).toBe('NORMAL');
   });
 
   it('adds a liability class to liability rows', async () => {

@@ -36,6 +36,28 @@ func CheckAccountType(accType AccountType) error {
 	}
 }
 
+func CheckAccountAssetRole(role AccountAssetRole) error {
+	switch role {
+	case AccountAssetRoleNormal, AccountAssetRoleBrokerage, AccountAssetRoleInvestment:
+		return nil
+	default:
+		return errors.ErrInvalidInputWithMessage("asset_role needs to be NORMAL, BROKERAGE or INVESTMENT", nil)
+	}
+}
+
+func NormalizeAccountAssetRole(accountType AccountType, role AccountAssetRole) (AccountAssetRole, error) {
+	if accountType == AccountTypeLiability {
+		return AccountAssetRoleNormal, nil
+	}
+	if role == "" {
+		role = AccountAssetRoleNormal
+	}
+	if err := CheckAccountAssetRole(role); err != nil {
+		return "", err
+	}
+	return role, nil
+}
+
 func CheckAccountCurrency(currency string) error {
 	if len(currency) != 3 {
 		return errors.ErrInvalidInputWithMessage("currency needs to be 3 letters", nil)

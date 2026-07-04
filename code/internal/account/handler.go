@@ -14,19 +14,19 @@ type Handler struct {
 }
 
 type CreateAccountInput struct {
-	Name               string `json:"name" binding:"required"`
-	AccountType        string `json:"type" binding:"required"`
-	Currency           string `json:"currency" binding:"required"`
-	IsBrokerageAccount bool   `json:"is_brokerage_account"`
-	HideFromDashboard  bool   `json:"hide_from_dashboard"`
+	Name              string `json:"name" binding:"required"`
+	AccountType       string `json:"type" binding:"required"`
+	Currency          string `json:"currency" binding:"required"`
+	AssetRole         string `json:"asset_role"`
+	HideFromDashboard bool   `json:"hide_from_dashboard"`
 }
 
 type ChangeAccountInput struct {
-	Name               *string `json:"name"`
-	AccountType        *string `json:"type"`
-	Currency           *string `json:"currency"`
-	IsBrokerageAccount *bool   `json:"is_brokerage_account"`
-	HideFromDashboard  *bool   `json:"hide_from_dashboard"`
+	Name              *string `json:"name"`
+	AccountType       *string `json:"type"`
+	Currency          *string `json:"currency"`
+	AssetRole         *string `json:"asset_role"`
+	HideFromDashboard *bool   `json:"hide_from_dashboard"`
 }
 
 type ReorderAccountsInput struct {
@@ -93,11 +93,11 @@ func (h *Handler) CreateAccount(c *gin.Context) {
 	}
 
 	account, err := h.service.AddAccount(userID, CreateAccountRequest{
-		Name:               req.Name,
-		Type:               accType,
-		Currency:           req.Currency,
-		IsBrokerageAccount: req.IsBrokerageAccount,
-		HideFromDashboard:  req.HideFromDashboard,
+		Name:              req.Name,
+		Type:              accType,
+		Currency:          req.Currency,
+		AssetRole:         normalizeAssetRoleInput(req.AssetRole),
+		HideFromDashboard: req.HideFromDashboard,
 	})
 
 	if err != nil {
@@ -232,16 +232,21 @@ func (h *Handler) UpdateAccount(c *gin.Context) {
 	if req.HideFromDashboard != nil {
 		hideFromDashboard = req.HideFromDashboard
 	}
-	var isBrokerageAccount *bool
-	if req.IsBrokerageAccount != nil {
-		isBrokerageAccount = req.IsBrokerageAccount
+	var assetRole *AccountAssetRole
+	if req.AssetRole != nil {
+		role := AccountAssetRole(*req.AssetRole)
+		if err := CheckAccountAssetRole(role); err != nil {
+			appHttp.HandleError(c, err)
+			return
+		}
+		assetRole = &role
 	}
 	account, err := h.service.UpdateAccount(userID, code, UpdateAccountRequest{
-		Name:               name,
-		Type:               accType,
-		Currency:           currency,
-		IsBrokerageAccount: isBrokerageAccount,
-		HideFromDashboard:  hideFromDashboard,
+		Name:              name,
+		Type:              accType,
+		Currency:          currency,
+		AssetRole:         assetRole,
+		HideFromDashboard: hideFromDashboard,
 	})
 
 	if err != nil {
@@ -345,4 +350,11 @@ func (h *Handler) DeleteAccountPermanently(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func normalizeAssetRoleInput(value string) AccountAssetRole {
+	if value == "" {
+		return AccountAssetRoleNormal
+	}
+	return AccountAssetRole(value)
 }

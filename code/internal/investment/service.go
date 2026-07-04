@@ -3,6 +3,7 @@ package investment
 import (
 	"context"
 	"errors"
+	"expense-tracker/internal/account"
 	appErr "expense-tracker/internal/errors"
 	"expense-tracker/internal/slugutil"
 	"expense-tracker/internal/transaction"
@@ -2523,9 +2524,9 @@ func (s *service) reallocateOperationFeesByDate(tx *gorm.DB, userID uuid.UUID, d
 }
 
 type dbAccountRow struct {
-	ID                 uuid.UUID `gorm:"column:id"`
-	Code               string    `gorm:"column:code"`
-	IsBrokerageAccount bool      `gorm:"column:is_brokerage_account"`
+	ID        uuid.UUID                `gorm:"column:id"`
+	Code      string                   `gorm:"column:code"`
+	AssetRole account.AccountAssetRole `gorm:"column:asset_role"`
 }
 
 func resolveActiveLeafCategoryID(tx *gorm.DB, userID uuid.UUID, code string) (uuid.UUID, error) {
@@ -2548,7 +2549,7 @@ func resolveActiveLeafCategoryID(tx *gorm.DB, userID uuid.UUID, code string) (uu
 func resolveActiveAccountByCode(tx *gorm.DB, userID uuid.UUID, code string) (*dbAccountRow, error) {
 	var row dbAccountRow
 	err := tx.Table("accounts").
-		Select("id, code, is_brokerage_account").
+		Select("id, code, asset_role").
 		Where("user_id = ? AND code = ? AND deactivated_at IS NULL", userID, strings.ToLower(strings.TrimSpace(code))).
 		First(&row).Error
 	if err != nil {
@@ -2565,7 +2566,7 @@ func resolveActiveBrokerageAccountByCode(tx *gorm.DB, userID uuid.UUID, code str
 	if err != nil {
 		return nil, err
 	}
-	if !row.IsBrokerageAccount {
+	if row.AssetRole != account.AccountAssetRoleBrokerage {
 		return nil, appErr.ErrInvalidInputWithMessage("investment operations require an active investment account", nil)
 	}
 	return row, nil
@@ -2579,7 +2580,7 @@ func loadBrokerageAccountsByCode(tx *gorm.DB, userID uuid.UUID, accountsByCode m
 		}
 		row.ID = resolved.ID
 		row.Code = resolved.Code
-		row.IsBrokerageAccount = resolved.IsBrokerageAccount
+		row.AssetRole = resolved.AssetRole
 	}
 	return nil
 }

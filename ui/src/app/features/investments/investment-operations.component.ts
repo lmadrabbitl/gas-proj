@@ -986,7 +986,7 @@ export class InvestmentOperationsComponent implements OnInit {
         this.selectedOperationIds.set([]);
         this.assets.set(assets);
         this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
-        this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.is_brokerage_account));
+        this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'BROKERAGE'));
         this.loading.set(false);
       },
       error: (error) => {
