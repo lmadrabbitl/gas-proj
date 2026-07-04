@@ -127,6 +127,7 @@ export interface InvestmentOperation {
   asset_name: string;
   asset_type: InvestmentAssetType;
   brokerage_account_code?: string | null;
+  investment_account_code?: string | null;
   has_linked_mirror?: boolean;
   operation_type: InvestmentOperationType;
   date: string;
@@ -372,6 +373,7 @@ export interface SaveInvestmentPortfolioAssetPayload {
 export interface CreateInvestmentOperationPayload {
   asset_code: string;
   brokerage_account_code: string;
+  investment_account_code: string;
   operation_type: InvestmentOperationType;
   date: string;
   quantity: number;
@@ -384,6 +386,7 @@ export interface CreateBulkInvestmentOperationPayload {
   operations: Array<{
     asset_code: string;
     brokerage_account_code: string;
+    investment_account_code: string;
     operation_type: InvestmentOperationType;
     date: string;
     quantity: number;
@@ -398,6 +401,7 @@ export interface ImportInvestmentOperationsPayload {
     client_row_id: string;
     asset_code: string;
     brokerage_account_code: string;
+    investment_account_code: string;
     operation_type: InvestmentOperationType;
     date: string;
     quantity: number;
@@ -422,6 +426,7 @@ export interface ImportInvestmentOperationsResponse {
 export interface UpdateInvestmentOperationPayload {
   asset_code?: string;
   brokerage_account_code?: string;
+  investment_account_code?: string;
   operation_type?: InvestmentOperationType;
   date?: string;
   quantity?: number;

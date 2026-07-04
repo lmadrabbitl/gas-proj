@@ -74,6 +74,7 @@ type UpdatePortfolio struct {
 type UpdateOperationModel struct {
 	AssetID                *uuid.UUID
 	BrokerageAccountID     *uuid.UUID
+	InvestmentAccountID    *uuid.UUID
 	OperationType          *OperationType
 	Date                   *time.Time
 	Quantity               *int64
@@ -401,6 +402,7 @@ func (repo *repository) ListOperations(userID uuid.UUID) ([]OperationRow, error)
 			a.name AS asset_name,
 			a.asset_type AS asset_type,
 			ba.code AS brokerage_account_code,
+			ia.code AS investment_account_code,
 			EXISTS (
 				SELECT 1
 				FROM investment_operation_transaction_links iotl
@@ -420,6 +422,7 @@ func (repo *repository) ListOperations(userID uuid.UUID) ([]OperationRow, error)
 		FROM investment_operations o
 		JOIN investment_assets a ON a.id = o.asset_id
 		LEFT JOIN accounts ba ON ba.id = o.brokerage_account_id AND ba.user_id = o.user_id
+		LEFT JOIN accounts ia ON ia.id = o.investment_account_id AND ia.user_id = o.user_id
 		WHERE o.user_id = ?
 		ORDER BY o.date DESC, o.created_at DESC, o.id DESC
 	`, userID).Scan(&rows).Error
@@ -470,6 +473,9 @@ func (repo *repository) UpdateOperation(db *gorm.DB, userID, operationID uuid.UU
 	}
 	if update.BrokerageAccountID != nil {
 		updates["brokerage_account_id"] = *update.BrokerageAccountID
+	}
+	if update.InvestmentAccountID != nil {
+		updates["investment_account_id"] = *update.InvestmentAccountID
 	}
 	if update.OperationType != nil {
 		updates["operation_type"] = *update.OperationType

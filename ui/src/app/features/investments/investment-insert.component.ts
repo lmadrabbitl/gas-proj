@@ -19,6 +19,7 @@ interface DraftOperationRow {
   assetCode: string;
   operationType: InvestmentOperationType | '';
   brokerageAccountCode: string;
+  investmentAccountCode: string;
   quantity: string;
   unitPrice: string;
   unitPriceManualDecimal: boolean;
@@ -50,7 +51,7 @@ interface MirroredDraftRow {
 }
 
 const INITIAL_ROWS = 10;
-const INSERT_COLUMN_COUNT = 7;
+const INSERT_COLUMN_COUNT = 8;
 
 @Component({
   selector: 'app-investment-insert',
@@ -90,6 +91,7 @@ const INSERT_COLUMN_COUNT = 7;
               <col class="insert-col-description" />
               <col class="insert-col-type" />
               <col class="insert-col-description" />
+              <col class="insert-col-description" />
               <col class="insert-col-amount" />
               <col class="insert-col-amount" />
               <col class="insert-col-amount" />
@@ -101,6 +103,7 @@ const INSERT_COLUMN_COUNT = 7;
                 <th>{{ messages.columns.asset }}</th>
                 <th>{{ messages.columns.type }}</th>
                 <th>{{ messages.columns.brokerageAccount }}</th>
+                <th>{{ messages.columns.investmentAccount }}</th>
                 <th>{{ messages.columns.quantity }}</th>
                 <th>{{ messages.columns.unitPrice }}</th>
                 <th>{{ messages.columns.totalFee }}</th>
@@ -168,6 +171,21 @@ const INSERT_COLUMN_COUNT = 7;
                     </select>
                   </td>
                   <td>
+                    <select
+                      class="grid-input compact-grid-input"
+                      data-grid-cell
+                      [(ngModel)]="row.investmentAccountCode"
+                      name="investment-account-{{ row.id }}"
+                      (paste)="handlePaste($event, rowIndex, 4)"
+                      (keydown)="moveCell($event)"
+                    >
+                      <option value=""></option>
+                      @for (account of investmentAccounts(); track account.Code) {
+                        <option [value]="account.Code">{{ account.Name }}</option>
+                      }
+                    </select>
+                  </td>
+                  <td>
                     <input
                       class="grid-input compact-grid-input"
                       data-grid-cell
@@ -176,7 +194,7 @@ const INSERT_COLUMN_COUNT = 7;
                       [(ngModel)]="row.quantity"
                       name="quantity-{{ row.id }}"
                       (blur)="normalizeQuantity(row)"
-                      (paste)="handlePaste($event, rowIndex, 4)"
+                      (paste)="handlePaste($event, rowIndex, 5)"
                       (keydown)="moveCell($event)"
                     />
                   </td>
@@ -190,7 +208,7 @@ const INSERT_COLUMN_COUNT = 7;
                       name="unit-price-{{ row.id }}"
                       (ngModelChange)="onMoneyInput(row, 'unitPrice', $event)"
                       (blur)="finishMoneyEdit(row, 'unitPrice')"
-                      (paste)="handlePaste($event, rowIndex, 5)"
+                      (paste)="handlePaste($event, rowIndex, 6)"
                       (keydown)="moveCell($event)"
                     />
                   </td>
@@ -204,7 +222,7 @@ const INSERT_COLUMN_COUNT = 7;
                       name="total-fee-{{ row.id }}"
                       (ngModelChange)="onMoneyInput(row, 'totalFeeAmount', $event)"
                       (blur)="finishMoneyEdit(row, 'totalFeeAmount')"
-                      (paste)="handlePaste($event, rowIndex, 6)"
+                      (paste)="handlePaste($event, rowIndex, 7)"
                       (keydown)="moveCell($event)"
                     />
                   </td>
@@ -218,12 +236,12 @@ const INSERT_COLUMN_COUNT = 7;
                 </tr>
                 @if (rowValidation(row).errors.length > 0) {
                   <tr class="draft-error-row">
-                    <td colspan="8">{{ rowValidation(row).errors.join(' · ') }}</td>
+                    <td colspan="9">{{ rowValidation(row).errors.join(' · ') }}</td>
                   </tr>
                 }
                 @if (rowGroupingWarning(row); as warning) {
                   <tr class="draft-warning-row">
-                    <td colspan="8">{{ warning }}</td>
+                    <td colspan="9">{{ warning }}</td>
                   </tr>
                 }
               }
@@ -391,6 +409,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   readonly mirrorRows = signal<MirroredDraftRow[]>([]);
   readonly activeAccounts = signal<Account[]>([]);
   readonly brokerageAccounts = signal<Account[]>([]);
+  readonly investmentAccounts = signal<Account[]>([]);
 
   private nextId = 1;
   private mirrorSourceApplied = false;
@@ -414,6 +433,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
         this.positions.set(positions);
         this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
         this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'BROKERAGE'));
+        this.investmentAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'INVESTMENT'));
       },
       error: (error) => this.toast.error(getApiErrorMessage(error)),
     });
@@ -548,7 +568,13 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       .replace(/\r/g, '')
       .split('\n')
       .filter((line) => line.length > 0)
-      .map((line) => line.split('\t'));
+      .map((line) => {
+        const values = line.split('\t');
+        if (startColumnIndex == 0 && values.length === INSERT_COLUMN_COUNT - 1) {
+          values.splice(4, 0, '');
+        }
+        return values;
+      });
     this.ensureRowCount(startRowIndex + pastedRows.length);
     const rows = this.rows();
     pastedRows.forEach((values, rowOffset) => {
@@ -612,6 +638,9 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       errors.push('Operação obrigatória');
     }
     if (!row.brokerageAccountCode.trim()) {
+      errors.push('Conta corretora obrigatória');
+    }
+    if (!row.investmentAccountCode.trim()) {
       errors.push('Conta de investimento obrigatória');
     }
     const quantity = Number(row.quantity);
@@ -842,6 +871,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
         client_row_id: this.clientRowId(row),
         asset_code: row.assetCode,
         brokerage_account_code: row.brokerageAccountCode,
+        investment_account_code: row.investmentAccountCode,
         operation_type: row.operationType as InvestmentOperationType,
         date: dateInputToIso(brazilianDateToQuery(row.date)),
         quantity: Number(row.quantity),
@@ -875,6 +905,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
             this.positions.set(positions);
             this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
             this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'BROKERAGE'));
+            this.investmentAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'INVESTMENT'));
           },
           error: (error) => this.toast.error(getApiErrorMessage(error)),
         });
@@ -894,6 +925,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       assetCode: '',
       operationType: '',
       brokerageAccountCode: '',
+      investmentAccountCode: '',
       quantity: '',
       unitPrice: '',
       unitPriceManualDecimal: false,
@@ -903,7 +935,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   }
 
   private isEmpty(row: DraftOperationRow): boolean {
-    return !row.date && !row.assetCode && !row.operationType && !row.brokerageAccountCode && !row.quantity && !row.unitPrice;
+    return !row.date && !row.assetCode && !row.operationType && !row.brokerageAccountCode && !row.investmentAccountCode && !row.quantity && !row.unitPrice;
   }
 
   private ensureRowCount(requiredCount: number): void {
@@ -930,13 +962,16 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
         row.brokerageAccountCode = this.resolveBrokerageAccountPasteValue(value);
         break;
       case 4:
-        row.quantity = value;
+        row.investmentAccountCode = this.resolveInvestmentAccountPasteValue(value);
         break;
       case 5:
+        row.quantity = value;
+        break;
+      case 6:
         row.unitPrice = value;
         row.unitPriceManualDecimal = value.includes(',');
         break;
-      case 6:
+      case 7:
         row.totalFeeAmount = value;
         row.totalFeeAmountManualDecimal = value.includes(',');
         break;
@@ -966,6 +1001,25 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     }
 
     const byName = this.brokerageAccounts().find(
+      (account) => account.Name.trim().toLocaleLowerCase('pt-BR') === normalized.toLocaleLowerCase('pt-BR'),
+    );
+    return byName?.Code ?? normalized;
+  }
+
+  private resolveInvestmentAccountPasteValue(value: string): string {
+    const normalized = value.trim();
+    if (!normalized) {
+      return '';
+    }
+
+    const byCode = this.investmentAccounts().find(
+      (account) => account.Code.toLocaleLowerCase('pt-BR') === normalized.toLocaleLowerCase('pt-BR'),
+    );
+    if (byCode) {
+      return byCode.Code;
+    }
+
+    const byName = this.investmentAccounts().find(
       (account) => account.Name.trim().toLocaleLowerCase('pt-BR') === normalized.toLocaleLowerCase('pt-BR'),
     );
     return byName?.Code ?? normalized;

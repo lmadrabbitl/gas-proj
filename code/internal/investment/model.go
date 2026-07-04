@@ -52,6 +52,7 @@ type Operation struct {
 	UserID                 uuid.UUID     `gorm:"type:uuid;not null"`
 	AssetID                uuid.UUID     `gorm:"type:uuid;not null"`
 	BrokerageAccountID     *uuid.UUID    `gorm:"column:brokerage_account_id;type:uuid"`
+	InvestmentAccountID    *uuid.UUID    `gorm:"column:investment_account_id;type:uuid"`
 	OperationType          OperationType `gorm:"column:operation_type;type:text;not null"`
 	Date                   time.Time     `gorm:"type:date;not null"`
 	Quantity               int64         `gorm:"type:bigint;not null"`
@@ -165,6 +166,7 @@ type OperationRow struct {
 	AssetName              string        `json:"asset_name" gorm:"column:asset_name"`
 	AssetType              AssetType     `json:"asset_type" gorm:"column:asset_type"`
 	BrokerageAccountCode   *string       `json:"brokerage_account_code" gorm:"column:brokerage_account_code"`
+	InvestmentAccountCode  *string       `json:"investment_account_code" gorm:"column:investment_account_code"`
 	HasLinkedMirror        bool          `json:"has_linked_mirror" gorm:"column:has_linked_mirror"`
 	OperationType          OperationType `json:"operation_type" gorm:"column:operation_type"`
 	Date                   time.Time     `json:"date" gorm:"column:date"`

@@ -55,14 +55,15 @@ type SuggestPortfolioInvestmentInput struct {
 }
 
 type CreateOperationInput struct {
-	AssetCode            string    `json:"asset_code" binding:"required"`
-	BrokerageAccountCode string    `json:"brokerage_account_code" binding:"required"`
-	OperationType        string    `json:"operation_type" binding:"required"`
-	Date                 time.Time `json:"date" binding:"required"`
-	Quantity             int64     `json:"quantity" binding:"required"`
-	UnitPrice            int64     `json:"unit_price" binding:"required"`
-	FeeAmount            int64     `json:"fee_amount"`
-	Notes                string    `json:"notes"`
+	AssetCode             string    `json:"asset_code" binding:"required"`
+	BrokerageAccountCode  string    `json:"brokerage_account_code" binding:"required"`
+	InvestmentAccountCode string    `json:"investment_account_code" binding:"required"`
+	OperationType         string    `json:"operation_type" binding:"required"`
+	Date                  time.Time `json:"date" binding:"required"`
+	Quantity              int64     `json:"quantity" binding:"required"`
+	UnitPrice             int64     `json:"unit_price" binding:"required"`
+	FeeAmount             int64     `json:"fee_amount"`
+	Notes                 string    `json:"notes"`
 }
 
 type CreateBulkOperationsInput struct {
@@ -76,15 +77,16 @@ type ImportOperationsInput struct {
 }
 
 type ImportOperationInput struct {
-	ClientRowID          string    `json:"client_row_id" binding:"required"`
-	AssetCode            string    `json:"asset_code" binding:"required"`
-	BrokerageAccountCode string    `json:"brokerage_account_code" binding:"required"`
-	OperationType        string    `json:"operation_type" binding:"required"`
-	Date                 time.Time `json:"date" binding:"required"`
-	Quantity             int64     `json:"quantity" binding:"required"`
-	UnitPrice            int64     `json:"unit_price" binding:"required"`
-	TotalFeeAmount       int64     `json:"total_fee_amount"`
-	Notes                string    `json:"notes"`
+	ClientRowID           string    `json:"client_row_id" binding:"required"`
+	AssetCode             string    `json:"asset_code" binding:"required"`
+	BrokerageAccountCode  string    `json:"brokerage_account_code" binding:"required"`
+	InvestmentAccountCode string    `json:"investment_account_code" binding:"required"`
+	OperationType         string    `json:"operation_type" binding:"required"`
+	Date                  time.Time `json:"date" binding:"required"`
+	Quantity              int64     `json:"quantity" binding:"required"`
+	UnitPrice             int64     `json:"unit_price" binding:"required"`
+	TotalFeeAmount        int64     `json:"total_fee_amount"`
+	Notes                 string    `json:"notes"`
 }
 
 type ImportMirroredTransactionDraftInput struct {
@@ -111,25 +113,27 @@ type CreateOperationMirrorBulkItemInput struct {
 }
 
 type CreateBulkOperationInput struct {
-	AssetCode            string    `json:"asset_code" binding:"required"`
-	BrokerageAccountCode string    `json:"brokerage_account_code" binding:"required"`
-	OperationType        string    `json:"operation_type" binding:"required"`
-	Date                 time.Time `json:"date" binding:"required"`
-	Quantity             int64     `json:"quantity" binding:"required"`
-	UnitPrice            int64     `json:"unit_price" binding:"required"`
-	TotalFeeAmount       int64     `json:"total_fee_amount"`
-	Notes                string    `json:"notes"`
+	AssetCode             string    `json:"asset_code" binding:"required"`
+	BrokerageAccountCode  string    `json:"brokerage_account_code" binding:"required"`
+	InvestmentAccountCode string    `json:"investment_account_code" binding:"required"`
+	OperationType         string    `json:"operation_type" binding:"required"`
+	Date                  time.Time `json:"date" binding:"required"`
+	Quantity              int64     `json:"quantity" binding:"required"`
+	UnitPrice             int64     `json:"unit_price" binding:"required"`
+	TotalFeeAmount        int64     `json:"total_fee_amount"`
+	Notes                 string    `json:"notes"`
 }
 
 type UpdateOperationInput struct {
-	AssetCode            *string    `json:"asset_code"`
-	BrokerageAccountCode *string    `json:"brokerage_account_code"`
-	OperationType        *string    `json:"operation_type"`
-	Date                 *time.Time `json:"date"`
-	Quantity             *int64     `json:"quantity"`
-	UnitPrice            *int64     `json:"unit_price"`
-	FeeAmount            *int64     `json:"fee_amount"`
-	Notes                *string    `json:"notes"`
+	AssetCode             *string    `json:"asset_code"`
+	BrokerageAccountCode  *string    `json:"brokerage_account_code"`
+	InvestmentAccountCode *string    `json:"investment_account_code"`
+	OperationType         *string    `json:"operation_type"`
+	Date                  *time.Time `json:"date"`
+	Quantity              *int64     `json:"quantity"`
+	UnitPrice             *int64     `json:"unit_price"`
+	FeeAmount             *int64     `json:"fee_amount"`
+	Notes                 *string    `json:"notes"`
 }
 
 func NewHandler(service Service) *Handler {
@@ -442,14 +446,15 @@ func (h *Handler) CreateOperation(c *gin.Context) {
 		return
 	}
 	operation, err := h.service.CreateOperation(userID, CreateOperationRequest{
-		AssetCode:            input.AssetCode,
-		BrokerageAccountCode: input.BrokerageAccountCode,
-		OperationType:        OperationType(strings.ToUpper(input.OperationType)),
-		Date:                 input.Date,
-		Quantity:             input.Quantity,
-		UnitPrice:            input.UnitPrice,
-		FeeAmount:            input.FeeAmount,
-		Notes:                input.Notes,
+		AssetCode:             input.AssetCode,
+		BrokerageAccountCode:  input.BrokerageAccountCode,
+		InvestmentAccountCode: input.InvestmentAccountCode,
+		OperationType:         OperationType(strings.ToUpper(input.OperationType)),
+		Date:                  input.Date,
+		Quantity:              input.Quantity,
+		UnitPrice:             input.UnitPrice,
+		FeeAmount:             input.FeeAmount,
+		Notes:                 input.Notes,
 	})
 	if err != nil {
 		appHttp.HandleError(c, err)
@@ -475,14 +480,15 @@ func (h *Handler) CreateOperationsBulk(c *gin.Context) {
 	}
 	for _, item := range input.Operations {
 		req.Operations = append(req.Operations, CreateBulkOperationRequest{
-			AssetCode:            item.AssetCode,
-			BrokerageAccountCode: item.BrokerageAccountCode,
-			OperationType:        OperationType(strings.ToUpper(item.OperationType)),
-			Date:                 item.Date,
-			Quantity:             item.Quantity,
-			UnitPrice:            item.UnitPrice,
-			TotalFeeAmount:       item.TotalFeeAmount,
-			Notes:                item.Notes,
+			AssetCode:             item.AssetCode,
+			BrokerageAccountCode:  item.BrokerageAccountCode,
+			InvestmentAccountCode: item.InvestmentAccountCode,
+			OperationType:         OperationType(strings.ToUpper(item.OperationType)),
+			Date:                  item.Date,
+			Quantity:              item.Quantity,
+			UnitPrice:             item.UnitPrice,
+			TotalFeeAmount:        item.TotalFeeAmount,
+			Notes:                 item.Notes,
 		})
 	}
 
@@ -513,15 +519,16 @@ func (h *Handler) ImportOperations(c *gin.Context) {
 	}
 	for _, op := range input.Operations {
 		req.Operations = append(req.Operations, ImportOperationRequest{
-			ClientRowID:          strings.TrimSpace(op.ClientRowID),
-			AssetCode:            op.AssetCode,
-			BrokerageAccountCode: op.BrokerageAccountCode,
-			OperationType:        OperationType(strings.ToUpper(op.OperationType)),
-			Date:                 op.Date,
-			Quantity:             op.Quantity,
-			UnitPrice:            op.UnitPrice,
-			TotalFeeAmount:       op.TotalFeeAmount,
-			Notes:                op.Notes,
+			ClientRowID:           strings.TrimSpace(op.ClientRowID),
+			AssetCode:             op.AssetCode,
+			BrokerageAccountCode:  op.BrokerageAccountCode,
+			InvestmentAccountCode: op.InvestmentAccountCode,
+			OperationType:         OperationType(strings.ToUpper(op.OperationType)),
+			Date:                  op.Date,
+			Quantity:              op.Quantity,
+			UnitPrice:             op.UnitPrice,
+			TotalFeeAmount:        op.TotalFeeAmount,
+			Notes:                 op.Notes,
 		})
 	}
 	for _, draft := range input.MirroredTransactions {
@@ -575,13 +582,14 @@ func (h *Handler) UpdateOperation(c *gin.Context) {
 		return
 	}
 	req := UpdateOperationRequest{
-		AssetCode:            input.AssetCode,
-		BrokerageAccountCode: input.BrokerageAccountCode,
-		Date:                 input.Date,
-		Quantity:             input.Quantity,
-		UnitPrice:            input.UnitPrice,
-		FeeAmount:            input.FeeAmount,
-		Notes:                input.Notes,
+		AssetCode:             input.AssetCode,
+		BrokerageAccountCode:  input.BrokerageAccountCode,
+		InvestmentAccountCode: input.InvestmentAccountCode,
+		Date:                  input.Date,
+		Quantity:              input.Quantity,
+		UnitPrice:             input.UnitPrice,
+		FeeAmount:             input.FeeAmount,
+		Notes:                 input.Notes,
 	}
 	if input.OperationType != nil {
 		operationType := OperationType(strings.ToUpper(*input.OperationType))
