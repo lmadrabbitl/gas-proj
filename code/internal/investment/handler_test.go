@@ -131,7 +131,7 @@ func TestCreateOperationForwardsPayload(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Set("userID", userID)
-	c.Request = httptest.NewRequest(http.MethodPost, "/investments/operations", bytes.NewBufferString(`{"asset_code":"mxrf11","operation_type":"buy","date":"2026-06-20T00:00:00Z","quantity":10,"unit_price":1234,"fee_amount":10,"notes":"teste"}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/investments/operations", bytes.NewBufferString(`{"asset_code":"mxrf11","brokerage_account_code":"btg-invest","operation_type":"buy","date":"2026-06-20T00:00:00Z","quantity":10,"unit_price":1234,"fee_amount":10,"notes":"teste"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	NewHandler(service).CreateOperation(c)
@@ -139,7 +139,7 @@ func TestCreateOperationForwardsPayload(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", w.Code)
 	}
-	if got.AssetCode != "mxrf11" || got.OperationType != OperationTypeBuy || got.Quantity != 10 || got.UnitPrice != 1234 {
+	if got.AssetCode != "mxrf11" || got.BrokerageAccountCode != "btg-invest" || got.OperationType != OperationTypeBuy || got.Quantity != 10 || got.UnitPrice != 1234 {
 		t.Fatalf("unexpected mapped request: %+v", got)
 	}
 }
@@ -313,7 +313,7 @@ func TestCreateOperationParsesDate(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Set("userID", uuid.New())
-	c.Request = httptest.NewRequest(http.MethodPost, "/investments/operations", bytes.NewBufferString(`{"asset_code":"mxrf11","operation_type":"buy","date":"2026-06-20T00:00:00Z","quantity":1,"unit_price":100,"fee_amount":0}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/investments/operations", bytes.NewBufferString(`{"asset_code":"mxrf11","brokerage_account_code":"btg-invest","operation_type":"buy","date":"2026-06-20T00:00:00Z","quantity":1,"unit_price":100,"fee_amount":0}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	NewHandler(service).CreateOperation(c)
@@ -342,7 +342,7 @@ func TestCreateBulkOperationsForwardsRows(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Set("userID", userID)
-	c.Request = httptest.NewRequest(http.MethodPost, "/investments/operations/bulk", bytes.NewBufferString(`{"operations":[{"asset_code":"mxrf11","operation_type":"buy","date":"2026-06-20T00:00:00Z","quantity":10,"unit_price":1234,"total_fee_amount":100}]}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/investments/operations/bulk", bytes.NewBufferString(`{"operations":[{"asset_code":"mxrf11","brokerage_account_code":"btg-invest","operation_type":"buy","date":"2026-06-20T00:00:00Z","quantity":10,"unit_price":1234,"total_fee_amount":100}]}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	NewHandler(service).CreateOperationsBulk(c)
@@ -353,7 +353,7 @@ func TestCreateBulkOperationsForwardsRows(t *testing.T) {
 	if len(got.Operations) != 1 {
 		t.Fatalf("expected 1 operation, got %d", len(got.Operations))
 	}
-	if got.Operations[0].OperationType != OperationTypeBuy || got.Operations[0].TotalFeeAmount != 100 {
+	if got.Operations[0].BrokerageAccountCode != "btg-invest" || got.Operations[0].OperationType != OperationTypeBuy || got.Operations[0].TotalFeeAmount != 100 {
 		t.Fatalf("unexpected request payload: %+v", got.Operations[0])
 	}
 }

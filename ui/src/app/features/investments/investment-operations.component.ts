@@ -148,6 +148,7 @@ type MirrorDraftRow = {
               <col class="operations-col-date" />
               <col class="operations-col-asset" />
               <col class="operations-col-type" />
+              <col class="operations-col-brokerage" />
               <col class="operations-col-quantity" />
               <col class="operations-col-unit-price" />
               <col class="operations-col-fee" />
@@ -160,6 +161,7 @@ type MirrorDraftRow = {
                 <th>{{ messages.columns.date }}</th>
                 <th>{{ messages.columns.asset }}</th>
                 <th>{{ messages.columns.type }}</th>
+                <th>{{ messages.columns.brokerageAccount }}</th>
                 <th>{{ messages.columns.quantity }}</th>
                 <th>{{ messages.columns.unitPrice }}</th>
                 <th>{{ messages.columns.fee }}</th>
@@ -182,6 +184,7 @@ type MirrorDraftRow = {
                   <td>{{ brazilianDate(operation.date) }}</td>
                   <td>{{ operation.asset_code }}</td>
                   <td>{{ operationType(operation.operation_type) }}</td>
+                  <td>{{ brokerageAccountLabel(operation.brokerage_account_code) }}</td>
                   <td>{{ operation.quantity }}</td>
                   <td>{{ money(operation.unit_price) }}</td>
                   <td>{{ money(operation.fee_amount) }}</td>
@@ -292,6 +295,15 @@ type MirrorDraftRow = {
               <option value="BUY">{{ operationType('BUY') }}</option>
               <option value="SELL">{{ operationType('SELL') }}</option>
               <option value="BONIFICATION">{{ operationType('BONIFICATION') }}</option>
+            </select>
+          </label>
+          <label>
+            {{ messages.form.brokerageAccount }}
+            <select formControlName="brokerage_account_code">
+              <option value="">Selecione</option>
+              @for (account of brokerageAccounts(); track account.Code) {
+                <option [value]="account.Code">{{ account.Name }}</option>
+              }
             </select>
           </label>
           <label>
@@ -615,6 +627,10 @@ type MirrorDraftRow = {
       width: 88px;
     }
 
+    .operations-col-brokerage {
+      width: 132px;
+    }
+
     .operations-col-quantity {
       width: 82px;
     }
@@ -841,6 +857,7 @@ export class InvestmentOperationsComponent implements OnInit {
   readonly operations = signal<InvestmentOperation[]>([]);
   readonly assets = signal<InvestmentAsset[]>([]);
   readonly activeAccounts = signal<Account[]>([]);
+  readonly brokerageAccounts = signal<Account[]>([]);
   readonly mirrorCandidates = signal<MirrorCandidate[]>([]);
   readonly mirrorMode = signal<MirrorMode>('create');
   readonly mirrorRows = signal<MirrorDraftRow[]>([]);
@@ -899,6 +916,7 @@ export class InvestmentOperationsComponent implements OnInit {
   readonly form = this.fb.group({
     asset_code: this.fb.nonNullable.control('', Validators.required),
     operation_type: this.fb.nonNullable.control<InvestmentOperationType>('BUY', Validators.required),
+    brokerage_account_code: this.fb.nonNullable.control('', Validators.required),
     quantity: this.fb.nonNullable.control(1, Validators.required),
     unit_price: this.fb.nonNullable.control('', Validators.required),
     fee_amount: this.fb.nonNullable.control('0,00'),
@@ -968,6 +986,7 @@ export class InvestmentOperationsComponent implements OnInit {
         this.selectedOperationIds.set([]);
         this.assets.set(assets);
         this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
+        this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.is_brokerage_account));
         this.loading.set(false);
       },
       error: (error) => {
@@ -983,6 +1002,7 @@ export class InvestmentOperationsComponent implements OnInit {
     this.form.reset({
       asset_code: '',
       operation_type: 'BUY',
+      brokerage_account_code: '',
       quantity: 1,
       unit_price: '',
       fee_amount: '0,00',
@@ -1002,6 +1022,7 @@ export class InvestmentOperationsComponent implements OnInit {
     this.form.reset({
       asset_code: operation.asset_code,
       operation_type: operation.operation_type,
+      brokerage_account_code: operation.brokerage_account_code ?? '',
       quantity: operation.quantity,
       unit_price: this.moneyInputValue(operation.unit_price),
       fee_amount: this.moneyInputValue(operation.original_total_fee_amount),
@@ -1036,6 +1057,7 @@ export class InvestmentOperationsComponent implements OnInit {
     const value = this.form.getRawValue();
     const operationPayload = {
       asset_code: value.asset_code,
+      brokerage_account_code: value.brokerage_account_code,
       operation_type: value.operation_type,
       quantity: Number(value.quantity),
       unit_price: decimalToCents(value.unit_price),
@@ -1344,6 +1366,10 @@ export class InvestmentOperationsComponent implements OnInit {
 
   assetLabel(code: string, name: string): string {
     return investmentAssetLabel(code, name);
+  }
+
+  brokerageAccountLabel(code: string | null | undefined): string {
+    return this.referenceData.accountName(code) || '—';
   }
 
   hasNotes(operation: InvestmentOperation): boolean {

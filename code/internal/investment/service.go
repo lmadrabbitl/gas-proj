@@ -121,13 +121,14 @@ type SavePortfolioAssetRequest struct {
 }
 
 type CreateOperationRequest struct {
-	AssetCode     string
-	OperationType OperationType
-	Date          time.Time
-	Quantity      int64
-	UnitPrice     int64
-	FeeAmount     int64
-	Notes         string
+	AssetCode            string
+	BrokerageAccountCode string
+	OperationType        OperationType
+	Date                 time.Time
+	Quantity             int64
+	UnitPrice            int64
+	FeeAmount            int64
+	Notes                string
 }
 
 type CreateBulkOperationsRequest struct {
@@ -141,14 +142,15 @@ type ImportOperationsRequest struct {
 }
 
 type ImportOperationRequest struct {
-	ClientRowID    string
-	AssetCode      string
-	OperationType  OperationType
-	Date           time.Time
-	Quantity       int64
-	UnitPrice      int64
-	TotalFeeAmount int64
-	Notes          string
+	ClientRowID          string
+	AssetCode            string
+	BrokerageAccountCode string
+	OperationType        OperationType
+	Date                 time.Time
+	Quantity             int64
+	UnitPrice            int64
+	TotalFeeAmount       int64
+	Notes                string
 }
 
 type MirroredTransactionDraftRequest struct {
@@ -181,23 +183,25 @@ type CreateOperationMirrorBulkItemRequest struct {
 }
 
 type CreateBulkOperationRequest struct {
-	AssetCode      string
-	OperationType  OperationType
-	Date           time.Time
-	Quantity       int64
-	UnitPrice      int64
-	TotalFeeAmount int64
-	Notes          string
+	AssetCode            string
+	BrokerageAccountCode string
+	OperationType        OperationType
+	Date                 time.Time
+	Quantity             int64
+	UnitPrice            int64
+	TotalFeeAmount       int64
+	Notes                string
 }
 
 type UpdateOperationRequest struct {
-	AssetCode     *string
-	OperationType *OperationType
-	Date          *time.Time
-	Quantity      *int64
-	UnitPrice     *int64
-	FeeAmount     *int64
-	Notes         *string
+	AssetCode            *string
+	BrokerageAccountCode *string
+	OperationType        *OperationType
+	Date                 *time.Time
+	Quantity             *int64
+	UnitPrice            *int64
+	FeeAmount            *int64
+	Notes                *string
 }
 
 func NewService(repo Repository, quoteProvider QuoteProvider, assetMetadataProvider AssetMetadataProvider, userConfigService UserConfigService, transactionReader TransactionReader) Service {
@@ -529,6 +533,7 @@ func (s *service) ReorderPortfolioAssets(userID uuid.UUID, portfolioCode string,
 
 func (s *service) CreateOperation(userID uuid.UUID, req CreateOperationRequest) (*OperationRow, error) {
 	req.AssetCode = normalizeAssetCode(req.AssetCode)
+	req.BrokerageAccountCode = normalizeAccountCode(req.BrokerageAccountCode)
 	req.Notes = strings.TrimSpace(req.Notes)
 	if err := s.validateCreateOperation(req); err != nil {
 		return nil, err
@@ -539,10 +544,15 @@ func (s *service) CreateOperation(userID uuid.UUID, req CreateOperationRequest) 
 	}
 	var created *Operation
 	err = s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		brokerageAccount, err := resolveActiveBrokerageAccountByCode(tx, userID, req.BrokerageAccountCode)
+		if err != nil {
+			return err
+		}
 		created, err = s.repo.CreateOperation(tx, &Operation{
 			ID:                     uuid.New(),
 			UserID:                 userID,
 			AssetID:                asset.ID,
+			BrokerageAccountID:     &brokerageAccount.ID,
 			OperationType:          req.OperationType,
 			Date:                   req.Date,
 			Quantity:               req.Quantity,
@@ -556,7 +566,7 @@ func (s *service) CreateOperation(userID uuid.UUID, req CreateOperationRequest) 
 		if err != nil {
 			return err
 		}
-		return s.reallocateOperationFeesByDate(tx, userID, req.Date, req.FeeAmount)
+		return s.reallocateOperationFeesByDate(tx, userID, req.Date, &brokerageAccount.ID, req.FeeAmount)
 	})
 	if err != nil {
 		return nil, err
@@ -571,14 +581,16 @@ func (s *service) CreateOperationsBulk(userID uuid.UUID, req CreateBulkOperation
 
 	prepared := make([]preparedBulkOperation, 0, len(req.Operations))
 	assetsByCode := make(map[string]*Asset, len(req.Operations))
+	brokerageAccountsByCode := make(map[string]*dbAccountRow, len(req.Operations))
 	for _, item := range req.Operations {
 		normalized := CreateOperationRequest{
-			AssetCode:     normalizeAssetCode(item.AssetCode),
-			OperationType: item.OperationType,
-			Date:          item.Date,
-			Quantity:      item.Quantity,
-			UnitPrice:     item.UnitPrice,
-			Notes:         strings.TrimSpace(item.Notes),
+			AssetCode:            normalizeAssetCode(item.AssetCode),
+			BrokerageAccountCode: normalizeAccountCode(item.BrokerageAccountCode),
+			OperationType:        item.OperationType,
+			Date:                 item.Date,
+			Quantity:             item.Quantity,
+			UnitPrice:            item.UnitPrice,
+			Notes:                strings.TrimSpace(item.Notes),
 		}
 		if err := s.validateCreateOperation(normalized); err != nil {
 			return nil, err
@@ -597,16 +609,23 @@ func (s *service) CreateOperationsBulk(userID uuid.UUID, req CreateBulkOperation
 			assetsByCode[normalized.AssetCode] = asset
 		}
 
+		brokerageAccount, ok := brokerageAccountsByCode[normalized.BrokerageAccountCode]
+		if !ok {
+			brokerageAccount = &dbAccountRow{Code: normalized.BrokerageAccountCode}
+			brokerageAccountsByCode[normalized.BrokerageAccountCode] = brokerageAccount
+		}
+
 		prepared = append(prepared, preparedBulkOperation{
-			asset:          asset,
-			assetCode:      normalized.AssetCode,
-			operationType:  normalized.OperationType,
-			date:           normalized.Date,
-			quantity:       normalized.Quantity,
-			unitPrice:      normalized.UnitPrice,
-			totalFeeAmount: item.TotalFeeAmount,
-			notes:          normalized.Notes,
-			grossAmount:    normalized.Quantity * normalized.UnitPrice,
+			asset:            asset,
+			assetCode:        normalized.AssetCode,
+			brokerageAccount: brokerageAccount,
+			operationType:    normalized.OperationType,
+			date:             normalized.Date,
+			quantity:         normalized.Quantity,
+			unitPrice:        normalized.UnitPrice,
+			totalFeeAmount:   item.TotalFeeAmount,
+			notes:            normalized.Notes,
+			grossAmount:      normalized.Quantity * normalized.UnitPrice,
 		})
 	}
 
@@ -616,12 +635,16 @@ func (s *service) CreateOperationsBulk(userID uuid.UUID, req CreateBulkOperation
 
 	createdIDs := make([]uuid.UUID, 0, len(prepared))
 	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
-		affectedDates := make(map[string]time.Time)
+		if err := loadBrokerageAccountsByCode(tx, userID, brokerageAccountsByCode); err != nil {
+			return err
+		}
+		affectedGroups := make(map[string]preparedBulkOperation)
 		for _, item := range prepared {
 			created, err := s.repo.CreateOperation(tx, &Operation{
 				ID:                     uuid.New(),
 				UserID:                 userID,
 				AssetID:                item.asset.ID,
+				BrokerageAccountID:     &item.brokerageAccount.ID,
 				OperationType:          item.operationType,
 				Date:                   item.date,
 				Quantity:               item.quantity,
@@ -636,12 +659,12 @@ func (s *service) CreateOperationsBulk(userID uuid.UUID, req CreateBulkOperation
 				return err
 			}
 			createdIDs = append(createdIDs, created.ID)
-			affectedDates[item.date.UTC().Format("2006-01-02")] = item.date
+			affectedGroups[feeGroupKey(item.date, &item.brokerageAccount.ID)] = item
 		}
 
-		for _, date := range affectedDates {
-			totalFee := totalFeeAmountForDate(prepared, date)
-			if err := s.reallocateOperationFeesByDate(tx, userID, date, totalFee); err != nil {
+		for _, item := range affectedGroups {
+			totalFee := totalFeeAmountForDateAndBrokerage(prepared, item.date, &item.brokerageAccount.ID)
+			if err := s.reallocateOperationFeesByDate(tx, userID, item.date, &item.brokerageAccount.ID, totalFee); err != nil {
 				return err
 			}
 		}
@@ -691,6 +714,7 @@ func (s *service) ImportOperations(userID uuid.UUID, req ImportOperationsRequest
 
 	prepared := make([]preparedImportedOperation, 0, len(req.Operations))
 	assetsByCode := make(map[string]*Asset, len(req.Operations))
+	brokerageAccountsByCode := make(map[string]*dbAccountRow, len(req.Operations))
 	for _, item := range req.Operations {
 		clientRowID := strings.TrimSpace(item.ClientRowID)
 		if clientRowID == "" {
@@ -698,12 +722,13 @@ func (s *service) ImportOperations(userID uuid.UUID, req ImportOperationsRequest
 		}
 
 		normalized := CreateOperationRequest{
-			AssetCode:     normalizeAssetCode(item.AssetCode),
-			OperationType: item.OperationType,
-			Date:          item.Date,
-			Quantity:      item.Quantity,
-			UnitPrice:     item.UnitPrice,
-			Notes:         strings.TrimSpace(item.Notes),
+			AssetCode:            normalizeAssetCode(item.AssetCode),
+			BrokerageAccountCode: normalizeAccountCode(item.BrokerageAccountCode),
+			OperationType:        item.OperationType,
+			Date:                 item.Date,
+			Quantity:             item.Quantity,
+			UnitPrice:            item.UnitPrice,
+			Notes:                strings.TrimSpace(item.Notes),
 		}
 		if err := s.validateCreateOperation(normalized); err != nil {
 			return nil, err
@@ -722,17 +747,24 @@ func (s *service) ImportOperations(userID uuid.UUID, req ImportOperationsRequest
 			assetsByCode[normalized.AssetCode] = asset
 		}
 
+		brokerageAccount, ok := brokerageAccountsByCode[normalized.BrokerageAccountCode]
+		if !ok {
+			brokerageAccount = &dbAccountRow{Code: normalized.BrokerageAccountCode}
+			brokerageAccountsByCode[normalized.BrokerageAccountCode] = brokerageAccount
+		}
+
 		preparedItem := preparedImportedOperation{
 			preparedBulkOperation: preparedBulkOperation{
-				asset:          asset,
-				assetCode:      normalized.AssetCode,
-				operationType:  normalized.OperationType,
-				date:           normalized.Date,
-				quantity:       normalized.Quantity,
-				unitPrice:      normalized.UnitPrice,
-				totalFeeAmount: item.TotalFeeAmount,
-				notes:          normalized.Notes,
-				grossAmount:    normalized.Quantity * normalized.UnitPrice,
+				asset:            asset,
+				assetCode:        normalized.AssetCode,
+				brokerageAccount: brokerageAccount,
+				operationType:    normalized.OperationType,
+				date:             normalized.Date,
+				quantity:         normalized.Quantity,
+				unitPrice:        normalized.UnitPrice,
+				totalFeeAmount:   item.TotalFeeAmount,
+				notes:            normalized.Notes,
+				grossAmount:      normalized.Quantity * normalized.UnitPrice,
 			},
 			clientRowID: clientRowID,
 		}
@@ -767,8 +799,11 @@ func (s *service) ImportOperations(userID uuid.UUID, req ImportOperationsRequest
 	}
 	createdIDs := make([]uuid.UUID, 0, len(prepared))
 	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		if err := loadBrokerageAccountsByCode(tx, userID, brokerageAccountsByCode); err != nil {
+			return err
+		}
 		affectedAccountCodes := make(map[string]struct{})
-		affectedDates := make(map[string]time.Time)
+		affectedGroups := make(map[string]preparedBulkOperation)
 		categoryID := uuid.Nil
 		var categoryErr error
 		if req.CreateMirroredTransactions {
@@ -783,6 +818,7 @@ func (s *service) ImportOperations(userID uuid.UUID, req ImportOperationsRequest
 				ID:                     uuid.New(),
 				UserID:                 userID,
 				AssetID:                item.asset.ID,
+				BrokerageAccountID:     &item.brokerageAccount.ID,
 				OperationType:          item.operationType,
 				Date:                   item.date,
 				Quantity:               item.quantity,
@@ -797,7 +833,7 @@ func (s *service) ImportOperations(userID uuid.UUID, req ImportOperationsRequest
 				return err
 			}
 			createdIDs = append(createdIDs, created.ID)
-			affectedDates[item.date.UTC().Format("2006-01-02")] = item.date
+			affectedGroups[feeGroupKey(item.date, &item.brokerageAccount.ID)] = item.preparedBulkOperation
 
 			if req.CreateMirroredTransactions && item.mirrorDraft != nil {
 				visibleTx, hiddenTx, err := createMirrorTransferPair(tx, userID, categoryID, created, item.assetCode, *item.mirrorDraft)
@@ -828,9 +864,9 @@ func (s *service) ImportOperations(userID uuid.UUID, req ImportOperationsRequest
 			}
 		}
 
-		for _, date := range affectedDates {
-			totalFee := totalFeeAmountForDate(bulkItems, date)
-			if err := s.reallocateOperationFeesByDate(tx, userID, date, totalFee); err != nil {
+		for _, item := range affectedGroups {
+			totalFee := totalFeeAmountForDateAndBrokerage(bulkItems, item.date, &item.brokerageAccount.ID)
+			if err := s.reallocateOperationFeesByDate(tx, userID, item.date, &item.brokerageAccount.ID, totalFee); err != nil {
 				return err
 			}
 		}
@@ -1062,6 +1098,7 @@ func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req U
 	}
 
 	finalAssetID := current.AssetID
+	finalBrokerageAccountID := current.BrokerageAccountID
 	finalOperationType := current.OperationType
 	finalDate := current.Date
 	finalQuantity := current.Quantity
@@ -1081,6 +1118,15 @@ func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req U
 		}
 		finalAssetID = asset.ID
 		update.AssetID = &asset.ID
+	}
+	if req.BrokerageAccountCode != nil {
+		normalized := normalizeAccountCode(*req.BrokerageAccountCode)
+		brokerageAccount, err := resolveActiveBrokerageAccountByCode(s.repo.DB(), userID, normalized)
+		if err != nil {
+			return nil, err
+		}
+		finalBrokerageAccountID = &brokerageAccount.ID
+		update.BrokerageAccountID = &brokerageAccount.ID
 	}
 	if req.OperationType != nil {
 		if err := CheckOperationType(*req.OperationType); err != nil {
@@ -1119,7 +1165,7 @@ func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req U
 		finalNotes = trimmed
 		update.Notes = &trimmed
 	}
-	if update.AssetID == nil && update.OperationType == nil && update.Date == nil && update.Quantity == nil &&
+	if update.AssetID == nil && update.BrokerageAccountID == nil && update.OperationType == nil && update.Date == nil && update.Quantity == nil &&
 		update.UnitPrice == nil && update.OriginalTotalFeeAmount == nil && update.Notes == nil {
 		return nil, appErr.ErrInvalidInputWithMessage("at least one operation field must be provided", nil)
 	}
@@ -1133,23 +1179,23 @@ func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req U
 	if finalAssetID != current.AssetID {
 		affectedAssets = append(affectedAssets, finalAssetID)
 	}
-
 	var updated *Operation
 	err = s.repo.DB().Transaction(func(tx *gorm.DB) error {
 		updated, err = s.repo.UpdateOperation(tx, userID, operationID, update)
 		if err != nil {
 			return err
 		}
-		if !sameOperationDate(current.Date, finalDate) {
-			oldTotalFee, err := s.totalFeeAmountForExistingDate(tx, userID, current.Date)
+		groupChanged := feeGroupKey(current.Date, current.BrokerageAccountID) != feeGroupKey(finalDate, finalBrokerageAccountID)
+		if groupChanged {
+			oldTotalFee, err := s.totalFeeAmountForExistingDate(tx, userID, current.Date, current.BrokerageAccountID)
 			if err != nil {
 				return err
 			}
-			if err := s.reallocateOperationFeesByDate(tx, userID, current.Date, oldTotalFee); err != nil {
+			if err := s.reallocateOperationFeesByDate(tx, userID, current.Date, current.BrokerageAccountID, oldTotalFee); err != nil {
 				return err
 			}
 			if req.FeeAmount == nil {
-				existingNewDateFee, err := s.totalFeeAmountForExistingDate(tx, userID, finalDate)
+				existingNewDateFee, err := s.totalFeeAmountForExistingDate(tx, userID, finalDate, finalBrokerageAccountID)
 				if err != nil {
 					return err
 				}
@@ -1166,7 +1212,7 @@ func (s *service) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, req U
 				}
 			}
 		}
-		if err := s.reallocateOperationFeesByDate(tx, userID, finalDate, finalTotalFeeAmount); err != nil {
+		if err := s.reallocateOperationFeesByDate(tx, userID, finalDate, finalBrokerageAccountID, finalTotalFeeAmount); err != nil {
 			return err
 		}
 		for _, assetID := range uniqueUUIDs(affectedAssets) {
@@ -1196,11 +1242,11 @@ func (s *service) DeleteOperation(userID uuid.UUID, operationID uuid.UUID) error
 		if err := s.repo.DeleteOperation(tx, userID, operationID); err != nil {
 			return err
 		}
-		oldTotalFee, err := s.totalFeeAmountForExistingDate(tx, userID, current.Date)
+		oldTotalFee, err := s.totalFeeAmountForExistingDate(tx, userID, current.Date, current.BrokerageAccountID)
 		if err != nil {
 			return err
 		}
-		if err := s.reallocateOperationFeesByDate(tx, userID, current.Date, oldTotalFee); err != nil {
+		if err := s.reallocateOperationFeesByDate(tx, userID, current.Date, current.BrokerageAccountID, oldTotalFee); err != nil {
 			return err
 		}
 		return s.rebuildPosition(tx, userID, current.AssetID)
@@ -2177,6 +2223,9 @@ func (s *service) validateCreateOperation(req CreateOperationRequest) error {
 	if err := CheckAssetCode(req.AssetCode); err != nil {
 		return err
 	}
+	if req.BrokerageAccountCode == "" {
+		return appErr.ErrInvalidInputWithMessage("investment account is required", nil)
+	}
 	if err := CheckOperationType(req.OperationType); err != nil {
 		return err
 	}
@@ -2294,16 +2343,17 @@ func uniqueUUIDs(input []uuid.UUID) []uuid.UUID {
 }
 
 type preparedBulkOperation struct {
-	asset          *Asset
-	assetCode      string
-	operationType  OperationType
-	date           time.Time
-	quantity       int64
-	unitPrice      int64
-	totalFeeAmount int64
-	allocatedFee   int64
-	notes          string
-	grossAmount    int64
+	asset            *Asset
+	assetCode        string
+	brokerageAccount *dbAccountRow
+	operationType    OperationType
+	date             time.Time
+	quantity         int64
+	unitPrice        int64
+	totalFeeAmount   int64
+	allocatedFee     int64
+	notes            string
+	grossAmount      int64
 }
 
 type preparedImportedOperation struct {
@@ -2318,8 +2368,8 @@ func ensureConsistentTotalFeeByDate(items []preparedBulkOperation) error {
 		if item.operationType == OperationTypeBonification {
 			continue
 		}
-		dateKey := item.date.UTC().Format("2006-01-02")
-		byGroup[dateKey] = append(byGroup[dateKey], index)
+		groupKey := feeGroupKey(item.date, &item.brokerageAccount.ID)
+		byGroup[groupKey] = append(byGroup[groupKey], index)
 	}
 
 	for _, indexes := range byGroup {
@@ -2330,20 +2380,20 @@ func ensureConsistentTotalFeeByDate(items []preparedBulkOperation) error {
 				continue
 			}
 			if items[index].totalFeeAmount != dayFee {
-				return appErr.ErrInvalidInputWithMessage("all operations on the same day must use the same total fee amount", nil)
+				return appErr.ErrInvalidInputWithMessage("all operations on the same day and investment account must use the same total fee amount", nil)
 			}
 		}
 	}
 	return nil
 }
 
-func totalFeeAmountForDate(items []preparedBulkOperation, date time.Time) int64 {
-	targetDate := date.UTC().Format("2006-01-02")
+func totalFeeAmountForDateAndBrokerage(items []preparedBulkOperation, date time.Time, brokerageAccountID *uuid.UUID) int64 {
+	targetGroup := feeGroupKey(date, brokerageAccountID)
 	for _, item := range items {
 		if item.operationType == OperationTypeBonification {
 			continue
 		}
-		if item.date.UTC().Format("2006-01-02") == targetDate {
+		if feeGroupKey(item.date, &item.brokerageAccount.ID) == targetGroup {
 			return item.totalFeeAmount
 		}
 	}
@@ -2354,13 +2404,25 @@ func sameOperationDate(left, right time.Time) bool {
 	return left.UTC().Format("2006-01-02") == right.UTC().Format("2006-01-02")
 }
 
-func (s *service) totalFeeAmountForExistingDate(tx *gorm.DB, userID uuid.UUID, date time.Time) (int64, error) {
+func feeGroupKey(date time.Time, brokerageAccountID *uuid.UUID) string {
+	accountKey := "none"
+	if brokerageAccountID != nil {
+		accountKey = brokerageAccountID.String()
+	}
+	return date.UTC().Format("2006-01-02") + "|" + accountKey
+}
+
+func (s *service) totalFeeAmountForExistingDate(tx *gorm.DB, userID uuid.UUID, date time.Time, brokerageAccountID *uuid.UUID) (int64, error) {
 	operations, err := s.repo.ListOperationsByDate(tx, userID, date)
 	if err != nil {
 		return 0, err
 	}
+	targetGroup := feeGroupKey(date, brokerageAccountID)
 	for _, operation := range operations {
 		if operation.OperationType == OperationTypeBonification {
+			continue
+		}
+		if feeGroupKey(operation.Date, operation.BrokerageAccountID) != targetGroup {
 			continue
 		}
 		return operation.OriginalTotalFeeAmount, nil
@@ -2368,7 +2430,7 @@ func (s *service) totalFeeAmountForExistingDate(tx *gorm.DB, userID uuid.UUID, d
 	return 0, nil
 }
 
-func (s *service) reallocateOperationFeesByDate(tx *gorm.DB, userID uuid.UUID, date time.Time, totalFeeAmount int64) error {
+func (s *service) reallocateOperationFeesByDate(tx *gorm.DB, userID uuid.UUID, date time.Time, brokerageAccountID *uuid.UUID, totalFeeAmount int64) error {
 	operations, err := s.repo.ListOperationsByDate(tx, userID, date)
 	if err != nil {
 		return err
@@ -2377,6 +2439,9 @@ func (s *service) reallocateOperationFeesByDate(tx *gorm.DB, userID uuid.UUID, d
 	reallocatable := make([]preparedBulkOperation, 0, len(operations))
 	for _, operation := range operations {
 		if operation.OperationType == OperationTypeBonification {
+			continue
+		}
+		if feeGroupKey(operation.Date, operation.BrokerageAccountID) != feeGroupKey(date, brokerageAccountID) {
 			continue
 		}
 		reallocatable = append(reallocatable, preparedBulkOperation{
@@ -2458,8 +2523,9 @@ func (s *service) reallocateOperationFeesByDate(tx *gorm.DB, userID uuid.UUID, d
 }
 
 type dbAccountRow struct {
-	ID   uuid.UUID `gorm:"column:id"`
-	Code string    `gorm:"column:code"`
+	ID                 uuid.UUID `gorm:"column:id"`
+	Code               string    `gorm:"column:code"`
+	IsBrokerageAccount bool      `gorm:"column:is_brokerage_account"`
 }
 
 func resolveActiveLeafCategoryID(tx *gorm.DB, userID uuid.UUID, code string) (uuid.UUID, error) {
@@ -2482,7 +2548,7 @@ func resolveActiveLeafCategoryID(tx *gorm.DB, userID uuid.UUID, code string) (uu
 func resolveActiveAccountByCode(tx *gorm.DB, userID uuid.UUID, code string) (*dbAccountRow, error) {
 	var row dbAccountRow
 	err := tx.Table("accounts").
-		Select("id, code").
+		Select("id, code, is_brokerage_account").
 		Where("user_id = ? AND code = ? AND deactivated_at IS NULL", userID, strings.ToLower(strings.TrimSpace(code))).
 		First(&row).Error
 	if err != nil {
@@ -2492,6 +2558,34 @@ func resolveActiveAccountByCode(tx *gorm.DB, userID uuid.UUID, code string) (*db
 		return nil, err
 	}
 	return &row, nil
+}
+
+func resolveActiveBrokerageAccountByCode(tx *gorm.DB, userID uuid.UUID, code string) (*dbAccountRow, error) {
+	row, err := resolveActiveAccountByCode(tx, userID, code)
+	if err != nil {
+		return nil, err
+	}
+	if !row.IsBrokerageAccount {
+		return nil, appErr.ErrInvalidInputWithMessage("investment operations require an active investment account", nil)
+	}
+	return row, nil
+}
+
+func loadBrokerageAccountsByCode(tx *gorm.DB, userID uuid.UUID, accountsByCode map[string]*dbAccountRow) error {
+	for code, row := range accountsByCode {
+		resolved, err := resolveActiveBrokerageAccountByCode(tx, userID, code)
+		if err != nil {
+			return err
+		}
+		row.ID = resolved.ID
+		row.Code = resolved.Code
+		row.IsBrokerageAccount = resolved.IsBrokerageAccount
+	}
+	return nil
+}
+
+func normalizeAccountCode(code string) string {
+	return strings.ToLower(strings.TrimSpace(code))
 }
 
 func resolveAssetCodeByID(tx *gorm.DB, userID, assetID uuid.UUID) (string, error) {
