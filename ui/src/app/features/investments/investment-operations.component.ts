@@ -2,7 +2,7 @@ import { Component, DestroyRef, ElementRef, HostListener, OnInit, computed, inje
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink, RouterLinkActive } from '@angular/router';
-import { CopyCheck, Link2, LucideAngularModule, Trash2 } from 'lucide-angular';
+import { Check, CopyCheck, Link2, LucideAngularModule, Trash2 } from 'lucide-angular';
 import { forkJoin, of, switchMap } from 'rxjs';
 
 import { InvestmentsService } from '../../data/investments.service';
@@ -89,7 +89,7 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
 
     <section class="panel">
       <form class="filters operations-filters" [formGroup]="filters">
-        <div class="filter-field">
+        <div class="filter-field filter-field-asset">
           <span class="filter-field-label">{{ messages.filters.asset }}</span>
           <div class="multi-select" data-multi-select="asset">
             <button class="multi-select-trigger" type="button" (click)="toggleFilterMenu('asset')">
@@ -112,7 +112,7 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
             }
           </div>
         </div>
-        <div class="filter-field">
+        <div class="filter-field filter-field-operation">
           <span class="filter-field-label">{{ messages.filters.operation }}</span>
           <div class="multi-select" data-multi-select="operation">
             <button class="multi-select-trigger" type="button" (click)="toggleFilterMenu('operation')">
@@ -135,19 +135,32 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
             }
           </div>
         </div>
-        <label>
-          {{ messages.filters.mirrorStatus }}
-          <select formControlName="mirror_status">
-            <option value="any">{{ messages.filters.anyMirrorStatus }}</option>
-            <option value="linked">{{ messages.filters.linkedOnly }}</option>
-            <option value="unlinked">{{ messages.filters.unlinkedOnly }}</option>
-          </select>
+        <label class="filter-field filter-field-mirror">
+          <span class="filter-field-label">{{ messages.filters.mirrorStatus }}</span>
+          <button
+            class="mirror-status-toggle"
+            type="button"
+            [attr.aria-label]="mirrorStatusLabel()"
+              [title]="mirrorStatusLabel()"
+              (click)="cycleMirrorStatusFilter()"
+          >
+            <span class="mirror-status-toggle-box" aria-hidden="true">
+              @if (filters.controls.mirror_status.value === 'linked') {
+                <lucide-icon [img]="checkIcon" [size]="14" [strokeWidth]="2.2" aria-hidden="true" />
+              } @else if (filters.controls.mirror_status.value === 'unlinked') {
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.9"></path>
+                </svg>
+              }
+            </span>
+            <span class="mirror-status-toggle-text">{{ mirrorStatusLabel() }}</span>
+          </button>
         </label>
-        <label>
+        <label class="filter-field filter-field-date">
           {{ messages.filters.from }}
           <input type="text" inputmode="numeric" [placeholder]="messages.filters.datePlaceholder" formControlName="from_date" />
         </label>
-        <label>
+        <label class="filter-field filter-field-date">
           {{ messages.filters.to }}
           <input type="text" inputmode="numeric" [placeholder]="messages.filters.datePlaceholder" formControlName="to_date" />
         </label>
@@ -500,13 +513,12 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                       </td>
                       <td class="mirror-transaction-cell">
                         <select [ngModel]="row.transactionId" (ngModelChange)="updateMirrorTransaction(index, $any($event))">
-                          <option value=""></option>
+                          <option value="">Selecione uma transferência</option>
                           @for (group of mirrorCandidateGroups(row); track group.label) {
-                            <optgroup [label]="group.label">
-                              @for (candidate of group.items; track $index) {
-                                <option [value]="candidate.id">{{ candidate.label }}</option>
-                              }
-                            </optgroup>
+                            <option value="" disabled>{{ group.label }}</option>
+                            @for (candidate of group.items; track candidate.id) {
+                              <option [value]="candidate.id">{{ candidate.label }}</option>
+                            }
                           }
                         </select>
                         @if (mirrorBrokerageHint(row); as hint) {
@@ -525,13 +537,12 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                           </label>
                           @if (row.attachRealizedPnl) {
                             <select [ngModel]="row.realizedPnlTransactionId" (ngModelChange)="updateMirrorRealizedPnlTransaction(index, $any($event))">
-                              <option value=""></option>
+                              <option value="">Selecione um resultado</option>
                               @for (group of mirrorPnlCandidateGroups(row); track group.label) {
-                                <optgroup [label]="group.label">
-                                  @for (candidate of group.items; track candidate.id) {
-                                    <option [value]="candidate.id">{{ candidate.label }}</option>
-                                  }
-                                </optgroup>
+                                <option value="" disabled>{{ group.label }}</option>
+                                @for (candidate of group.items; track candidate.id) {
+                                  <option [value]="candidate.id">{{ candidate.label }}</option>
+                                }
                               }
                             </select>
                           }
@@ -591,12 +602,19 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
     }
 
     .operations-filters {
-      grid-template-columns: repeat(2, minmax(180px, 1fr)) repeat(2, minmax(96px, 0.7fr));
+      align-items: end;
+      grid-template-columns:
+        minmax(138px, 0.72fr)
+        minmax(128px, 0.34fr)
+        minmax(136px, 0.34fr)
+        minmax(106px, 0.43fr)
+        minmax(106px, 0.43fr);
     }
 
     .filter-field {
       display: grid;
       gap: 7px;
+      min-width: 0;
     }
 
     .filter-field-label {
@@ -608,6 +626,13 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
     .multi-select {
       min-width: 0;
       position: relative;
+    }
+
+    .filter-field-asset,
+    .filter-field-operation,
+    .filter-field-date,
+    .filter-field-mirror {
+      min-width: 0;
     }
 
     .multi-select-trigger {
@@ -627,6 +652,47 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
       text-align: left;
       width: 100%;
       box-shadow: inset 0 1px 0 rgba(21, 32, 29, 0.03);
+    }
+
+    .mirror-status-toggle {
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: inherit;
+      cursor: pointer;
+      display: flex;
+      gap: 10px;
+      min-height: 46px;
+      min-width: 0;
+      padding: 0 13px;
+      text-align: left;
+      width: 100%;
+      box-shadow: inset 0 1px 0 rgba(21, 32, 29, 0.03);
+    }
+
+    .mirror-status-toggle-box {
+      align-items: center;
+      border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+      border-radius: 6px;
+      color: var(--accent-strong);
+      display: inline-flex;
+      flex: 0 0 18px;
+      height: 18px;
+      justify-content: center;
+      width: 18px;
+    }
+
+    .mirror-status-toggle-box svg {
+      height: 14px;
+      width: 14px;
+    }
+
+    .mirror-status-toggle-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .multi-select-trigger:focus-visible {
@@ -1025,6 +1091,7 @@ export class InvestmentOperationsComponent implements OnInit {
   readonly activeAssets = computed(() => this.assets().filter((asset) => asset.is_active));
   readonly operationFilterOptions: InvestmentOperationType[] = ['BUY', 'SELL', 'BONIFICATION'];
   readonly selectAllIcon = CopyCheck;
+  readonly checkIcon = Check;
   readonly mirrorIcon = Link2;
   readonly deleteIcon = Trash2;
   readonly assetFilterOptions = computed(() => {
@@ -1336,7 +1403,7 @@ export class InvestmentOperationsComponent implements OnInit {
     const eligible = selected.filter((operation) => this.isMirrorableOperation(operation));
     const selectionIssues = this.mirrorSelectionIssues(selected);
     if (eligible.length === 0) {
-      this.toast.error(selectionIssues[0] ?? 'Selecione pelo menos uma operação ainda não vinculada e que não seja bonificação.');
+      this.toast.error(this.mirrorSelectionBlockedMessage(selected));
       return;
     }
     if (selectionIssues.length > 0) {
@@ -1619,6 +1686,37 @@ export class InvestmentOperationsComponent implements OnInit {
     control.setValue(nextValues as never);
   }
 
+  setMirrorStatusFilter(value: MirrorStatusFilter): void {
+    if (this.filters.controls.mirror_status.value === value) {
+      return;
+    }
+    this.filters.controls.mirror_status.setValue(value);
+  }
+
+  cycleMirrorStatusFilter(): void {
+    const current = this.filters.controls.mirror_status.value;
+    if (current === 'any') {
+      this.setMirrorStatusFilter('linked');
+      return;
+    }
+    if (current === 'linked') {
+      this.setMirrorStatusFilter('unlinked');
+      return;
+    }
+    this.setMirrorStatusFilter('any');
+  }
+
+  mirrorStatusLabel(): string {
+    const current = this.filters.controls.mirror_status.value;
+    if (current === 'linked') {
+      return this.messages.filters.linkedOnly;
+    }
+    if (current === 'unlinked') {
+      return this.messages.filters.unlinkedOnly;
+    }
+    return this.messages.filters.anyMirrorStatus;
+  }
+
   isFilterSelected(type: OperationsFilterMenuType, value: string): boolean {
     return (type === 'asset' ? this.filters.controls.asset_codes.value : this.filters.controls.operation_types.value).includes(value as never);
   }
@@ -1805,6 +1903,16 @@ export class InvestmentOperationsComponent implements OnInit {
       issues.push('Bonificações e tipos não suportados não entram neste vínculo em lote.');
     }
     return issues;
+  }
+
+  private mirrorSelectionBlockedMessage(selected: InvestmentOperation[]): string {
+    if (selected.some((operation) => operation.operation_type === 'SELL' && !this.sellAutomationConfigured())) {
+      return this.messages.mirror.sellConfigRequired;
+    }
+    if (selected.some((operation) => operation.has_linked_mirror)) {
+      return 'Selecione pelo menos uma operação ainda não vinculada para abrir o vínculo em lote.';
+    }
+    return 'Selecione pelo menos uma operação ainda não vinculada e que não seja bonificação.';
   }
 
   private normalizeFilterDateControl(controlName: 'from_date' | 'to_date', value: string): void {
