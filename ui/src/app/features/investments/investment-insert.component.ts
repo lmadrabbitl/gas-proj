@@ -1,15 +1,18 @@
-import { AfterViewInit, Component, ElementRef, OnInit, computed, inject, signal } from '@angular/core';
+import { AfterViewInit, Component, DestroyRef, ElementRef, OnInit, computed, effect, inject, signal, untracked } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { RouterLink, RouterLinkActive } from '@angular/router';
-import { forkJoin } from 'rxjs';
+import { catchError, debounce, distinctUntilChanged, forkJoin, of, Subject, switchMap, timer } from 'rxjs';
 
 import { InvestmentsService } from '../../data/investments.service';
 import { ReferenceDataService } from '../../data/reference-data.service';
-import { getApiErrorMessage } from '../../shared/api-error';
+import { TransactionsService } from '../../data/transactions.service';
+import { UserConfigService } from '../../data/user-config.service';
+import { getApiErrorCode, getApiErrorDetails, getApiErrorMessage } from '../../shared/api-error';
 import { uiMessages } from '../../shared/messages';
 import { MoneyVisibilityService } from '../../shared/money-visibility.service';
-import { brazilianDateToQuery, centsToDecimal, dateInputToIso, decimalToCents } from '../../shared/money';
-import { Account, InvestmentAsset, InvestmentOperationType, InvestmentPosition } from '../../shared/models';
+import { brazilianDateToQuery, centsToCurrency, centsToDecimal, dateInputToIso, decimalToCents, toBrazilianDate } from '../../shared/money';
+import { Account, ImportInvestmentOperationsPayload, InvestmentOperation, InvestmentOperationType, InvestmentPositionPreviewRow } from '../../shared/models';
 import { ToastService } from '../../shared/toast.service';
 import { investmentAssetLabel } from '../../shared/labels';
 
@@ -32,26 +35,58 @@ interface RowValidation {
   errors: string[];
 }
 
-interface PositionPreviewRow {
-  assetCode: string;
-  assetName: string;
-  currentQuantity: number;
-  draftChange: number;
-  projectedQuantity: number;
-  currentAveragePrice: number;
-  projectedAveragePrice: number;
-}
-
 interface MirroredDraftRow {
   clientRowId: string;
+  groupKey: string;
+  operationType: InvestmentOperationType;
+  brokerageAccountCode: string;
+  investmentAccountCode: string;
   date: string;
   description: string;
+  netAmount: number;
+  realizedPnlAmount: number;
   sourceAccountCode: string;
   destinationAccountCode: string;
+  transactionId: string;
+  attachRealizedPnl: boolean;
+  realizedPnlTransactionId: string;
 }
+
+type MirrorMode = 'create' | 'attach';
+type MirrorCandidate = {
+  id: string;
+  amount: number;
+  label: string;
+  date: string;
+  accountCode: string;
+  transferAccountCode: string;
+};
+type MirrorCandidateGroup = { label: string; items: MirrorCandidate[] };
+type PreviewRequest = {
+  signature: string;
+  payload: ImportInvestmentOperationsPayload | null;
+  immediate: boolean;
+  blocked?: boolean;
+};
+type PreviewResult = {
+  position_preview_rows: InvestmentPositionPreviewRow[];
+  clear: boolean;
+  blocked: boolean;
+  rowErrors?: Record<number, string[]>;
+  message?: string | null;
+};
 
 const INITIAL_ROWS = 10;
 const INSERT_COLUMN_COUNT = 8;
+const MIRROR_OPTION_LABEL_MAX_CHARS = 67;
+const MIRROR_OPTION_DATE_CHARS = 8;
+const MIRROR_OPTION_SEPARATOR = ' · ';
+const MIRROR_OPTION_AMOUNT_MAX_CHARS = 12;
+const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
+  MIRROR_OPTION_LABEL_MAX_CHARS
+  - MIRROR_OPTION_DATE_CHARS
+  - (MIRROR_OPTION_SEPARATOR.length * 2)
+  - MIRROR_OPTION_AMOUNT_MAX_CHARS;
 
 @Component({
   selector: 'app-investment-insert',
@@ -82,16 +117,23 @@ const INSERT_COLUMN_COUNT = 8;
       <a routerLink="/investments/portfolios" routerLinkActive="active">{{ nav.portfolios }}</a>
     </nav>
 
+    @if (!sellAutomationConfigured()) {
+      <section class="panel page-warning">
+        <strong>{{ messages.sellAutomationWarning.title }}</strong>
+        <p>{{ messages.sellAutomationWarning.body }}</p>
+      </section>
+    }
+
     <section class="panel">
       <div class="insert-table-shell">
         <div class="table-wrap insert-table-wrap">
-          <table class="insert-table">
+          <table class="insert-table investment-insert-table">
             <colgroup>
-              <col class="insert-col-date" />
-              <col class="insert-col-description" />
-              <col class="insert-col-type" />
-              <col class="insert-col-description" />
-              <col class="insert-col-description" />
+              <col class="insert-col-date investment-insert-col-date" />
+              <col class="insert-col-description investment-insert-col-asset" />
+              <col class="insert-col-type investment-insert-col-type" />
+              <col class="insert-col-description investment-insert-col-account" />
+              <col class="insert-col-description investment-insert-col-account" />
               <col class="insert-col-amount" />
               <col class="insert-col-amount" />
               <col class="insert-col-amount" />
@@ -123,7 +165,7 @@ const INSERT_COLUMN_COUNT = 8;
                       name="date-{{ row.id }}"
                       (focus)="startDateEdit(row, $any($event.target))"
                       (ngModelChange)="onDateInput(row, $event)"
-                      (blur)="finishDateEdit(row)"
+                      (blur)="finishDateEdit(row); requestPreviewNow()"
                       (paste)="handlePaste($event, rowIndex, 0)"
                       (keydown)="moveCell($event)"
                     />
@@ -133,9 +175,10 @@ const INSERT_COLUMN_COUNT = 8;
                       class="grid-input"
                       data-grid-cell
                       [placeholder]="messages.placeholders.asset"
-                      [(ngModel)]="row.assetCode"
+                      [ngModel]="row.assetCode"
                       name="asset-{{ row.id }}"
-                      (blur)="normalizeAsset(row)"
+                      (ngModelChange)="updateAssetCode(row, $event)"
+                      (blur)="normalizeAsset(row); requestPreviewNow()"
                       (paste)="handlePaste($event, rowIndex, 1)"
                       (keydown)="moveCell($event)"
                     />
@@ -144,7 +187,8 @@ const INSERT_COLUMN_COUNT = 8;
                     <select
                       class="grid-input compact-grid-input"
                       data-grid-cell
-                      [(ngModel)]="row.operationType"
+                      [ngModel]="row.operationType"
+                      (ngModelChange)="onOperationTypeChange(row, $event)"
                       name="type-{{ row.id }}"
                       (paste)="handlePaste($event, rowIndex, 2)"
                       (keydown)="moveCell($event)"
@@ -159,7 +203,8 @@ const INSERT_COLUMN_COUNT = 8;
                     <select
                       class="grid-input compact-grid-input"
                       data-grid-cell
-                      [(ngModel)]="row.brokerageAccountCode"
+                      [ngModel]="row.brokerageAccountCode"
+                      (ngModelChange)="onBrokerageAccountCodeChange(row, $event)"
                       name="brokerage-account-{{ row.id }}"
                       (paste)="handlePaste($event, rowIndex, 3)"
                       (keydown)="moveCell($event)"
@@ -174,7 +219,8 @@ const INSERT_COLUMN_COUNT = 8;
                     <select
                       class="grid-input compact-grid-input"
                       data-grid-cell
-                      [(ngModel)]="row.investmentAccountCode"
+                      [ngModel]="row.investmentAccountCode"
+                      (ngModelChange)="onInvestmentAccountCodeChange(row, $event)"
                       name="investment-account-{{ row.id }}"
                       (paste)="handlePaste($event, rowIndex, 4)"
                       (keydown)="moveCell($event)"
@@ -191,9 +237,10 @@ const INSERT_COLUMN_COUNT = 8;
                       data-grid-cell
                       [placeholder]="messages.placeholders.quantity"
                       inputmode="numeric"
-                      [(ngModel)]="row.quantity"
+                      [ngModel]="row.quantity"
+                      (ngModelChange)="updateQuantity(row, $event)"
                       name="quantity-{{ row.id }}"
-                      (blur)="normalizeQuantity(row)"
+                      (blur)="normalizeQuantity(row); requestPreviewNow()"
                       (paste)="handlePaste($event, rowIndex, 5)"
                       (keydown)="moveCell($event)"
                     />
@@ -207,7 +254,7 @@ const INSERT_COLUMN_COUNT = 8;
                       [ngModel]="row.unitPrice"
                       name="unit-price-{{ row.id }}"
                       (ngModelChange)="onMoneyInput(row, 'unitPrice', $event)"
-                      (blur)="finishMoneyEdit(row, 'unitPrice')"
+                      (blur)="finishMoneyEdit(row, 'unitPrice'); requestPreviewNow()"
                       (paste)="handlePaste($event, rowIndex, 6)"
                       (keydown)="moveCell($event)"
                     />
@@ -221,7 +268,7 @@ const INSERT_COLUMN_COUNT = 8;
                       [ngModel]="row.totalFeeAmount"
                       name="total-fee-{{ row.id }}"
                       (ngModelChange)="onMoneyInput(row, 'totalFeeAmount', $event)"
-                      (blur)="finishMoneyEdit(row, 'totalFeeAmount')"
+                      (blur)="finishMoneyEdit(row, 'totalFeeAmount'); requestPreviewNow()"
                       (paste)="handlePaste($event, rowIndex, 7)"
                       (keydown)="moveCell($event)"
                     />
@@ -239,17 +286,12 @@ const INSERT_COLUMN_COUNT = 8;
                     <td colspan="9">{{ rowValidation(row).errors.join(' · ') }}</td>
                   </tr>
                 }
-                @if (rowGroupingWarning(row); as warning) {
-                  <tr class="draft-warning-row">
-                    <td colspan="9">{{ warning }}</td>
-                  </tr>
-                }
               }
             </tbody>
           </table>
         </div>
 
-        @if (positionPreviewRows().length > 0) {
+        @if (positionPreviewRows().length > 0 && !previewBlocked()) {
           <div class="insert-preview-block">
             <div class="panel-header insert-preview-header">
               <h2>{{ messages.preview.title }}</h2>
@@ -258,7 +300,7 @@ const INSERT_COLUMN_COUNT = 8;
               <table class="insert-preview-table">
                 <thead>
                   <tr>
-                    <th>{{ messages.preview.asset }}</th>
+                    <th class="insert-preview-asset-column">{{ messages.preview.asset }}</th>
                     <th>{{ messages.preview.currentQuantity }}</th>
                     <th>{{ messages.preview.draftChange }}</th>
                     <th>{{ messages.preview.projectedQuantity }}</th>
@@ -267,18 +309,28 @@ const INSERT_COLUMN_COUNT = 8;
                   </tr>
                 </thead>
                 <tbody>
-                  @for (row of positionPreviewRows(); track row.assetCode) {
+                  @for (row of positionPreviewRows(); track row.asset_code) {
                     <tr>
-                      <td>{{ assetLabel(row.assetCode, row.assetName) }}</td>
-                      <td class="amount-cell">{{ row.currentQuantity }}</td>
-                      <td class="amount-cell">{{ row.draftChange }}</td>
-                      <td class="amount-cell"><strong>{{ row.projectedQuantity }}</strong></td>
-                      <td class="amount-cell">{{ money(row.currentAveragePrice) }}</td>
-                      <td class="amount-cell"><strong>{{ money(row.projectedAveragePrice) }}</strong></td>
+                      <td class="insert-preview-asset-column">{{ assetLabel(row.asset_code, row.asset_name) }}</td>
+                      <td class="amount-cell">{{ row.current_quantity }}</td>
+                      <td class="amount-cell">{{ row.draft_change }}</td>
+                      <td class="amount-cell"><strong>{{ row.projected_quantity }}</strong></td>
+                      <td class="amount-cell">{{ money(row.current_average_price) }}</td>
+                      <td class="amount-cell"><strong>{{ money(row.projected_average_price) }}</strong></td>
                     </tr>
                   }
                 </tbody>
               </table>
+            </div>
+          </div>
+        } @else if (previewBlocked()) {
+          <div class="insert-preview-block">
+            <div class="panel-header insert-preview-header">
+              <h2>{{ messages.preview.title }}</h2>
+            </div>
+            <div class="panel page-warning insert-preview-state">
+              <strong>{{ messages.states.previewBlocked }}</strong>
+              <p>{{ previewBlockedHint() || messages.states.previewBlockedHint }}</p>
             </div>
           </div>
         }
@@ -294,15 +346,33 @@ const INSERT_COLUMN_COUNT = 8;
               <p class="page-subtitle">{{ messages.mirror.subtitle }}</p>
             </div>
           </div>
-          <p class="field-hint">{{ messages.mirror.applyAllHint }}</p>
+          <div class="mirror-mode-switch">
+            <label class="checkbox-label">
+              <input type="radio" name="insert-mirror-mode" [checked]="mirrorMode() === 'create'" (change)="mirrorMode.set('create')" />
+              <span>{{ messages.mirror.createMode }}</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="radio" name="insert-mirror-mode" [checked]="mirrorMode() === 'attach'" (change)="mirrorMode.set('attach')" />
+              <span>{{ messages.mirror.attachMode }}</span>
+            </label>
+          </div>
+          @if (mirrorRows().length > 1) {
+            <p class="field-hint">{{ messages.mirror.applyAllHint }}</p>
+          }
           <div class="table-wrap insert-table-wrap">
-            <table class="insert-preview-table">
+            <table class="insert-preview-table" [class.mirror-table-attach]="mirrorMode() === 'attach'">
               <thead>
                 <tr>
                   <th>{{ messages.columns.date }}</th>
                   <th>{{ messages.mirror.description }}</th>
-                  <th>{{ messages.mirror.source }}</th>
-                  <th>{{ messages.mirror.destination }}</th>
+                  <th>{{ messages.mirror.summary }}</th>
+                  @if (mirrorMode() === 'create') {
+                    <th>{{ messages.mirror.source }}</th>
+                    <th>{{ messages.mirror.destination }}</th>
+                  } @else {
+                    <th>{{ messages.mirror.existingTransaction }}</th>
+                    <th>{{ messages.mirror.realizedPnl }}</th>
+                  }
                 </tr>
               </thead>
               <tbody>
@@ -310,36 +380,97 @@ const INSERT_COLUMN_COUNT = 8;
                   <tr>
                     <td>{{ row.date }}</td>
                     <td>{{ row.description }}</td>
-                    <td>
-                      <select
-                        class="grid-input compact-grid-input"
-                        [ngModel]="row.sourceAccountCode"
-                        name="mirror-source-{{ row.clientRowId }}"
-                        (ngModelChange)="updateMirrorAccount(row, 'sourceAccountCode', $event)"
-                      >
-                        <option value=""></option>
-                        @for (account of activeAccounts(); track account.Code) {
-                          <option [value]="account.Code">{{ account.Name }}</option>
-                        }
-                      </select>
+                    <td class="mirror-summary-cell">
+                      @for (line of mirrorSummaryLines(row); track line) {
+                        <div>{{ line }}</div>
+                      }
                     </td>
-                    <td>
-                      <select
-                        class="grid-input compact-grid-input"
-                        [ngModel]="row.destinationAccountCode"
-                        name="mirror-destination-{{ row.clientRowId }}"
-                        (ngModelChange)="updateMirrorAccount(row, 'destinationAccountCode', $event)"
-                      >
-                        <option value=""></option>
-                        @for (account of activeAccounts(); track account.Code) {
-                          <option [value]="account.Code">{{ account.Name }}</option>
+                    @if (mirrorMode() === 'create') {
+                      <td>
+                        <select
+                          class="grid-input compact-grid-input"
+                          [ngModel]="row.sourceAccountCode"
+                          name="mirror-source-{{ row.clientRowId }}"
+                          (ngModelChange)="updateMirrorAccount(row, 'sourceAccountCode', $event)"
+                        >
+                          <option value=""></option>
+                          @for (account of activeAccounts(); track account.Code) {
+                            <option [value]="account.Code">{{ account.Name }}</option>
+                          }
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          class="grid-input compact-grid-input"
+                          [ngModel]="row.destinationAccountCode"
+                          name="mirror-destination-{{ row.clientRowId }}"
+                          (ngModelChange)="updateMirrorAccount(row, 'destinationAccountCode', $event)"
+                        >
+                          <option value=""></option>
+                          @for (account of activeAccounts(); track account.Code) {
+                            <option [value]="account.Code">{{ account.Name }}</option>
+                          }
+                        </select>
+                      </td>
+                    } @else {
+                      <td class="mirror-transaction-cell">
+                        <select
+                          class="grid-input compact-grid-input"
+                          [ngModel]="row.transactionId"
+                          name="mirror-transaction-{{ row.clientRowId }}"
+                          (ngModelChange)="updateMirrorTransaction(row, $event)"
+                        >
+                          <option value=""></option>
+                          @for (group of mirrorCandidateGroups(row); track group.label) {
+                            <optgroup [label]="group.label">
+                              @for (candidate of group.items; track $index) {
+                                <option [value]="candidate.id">{{ candidate.label }}</option>
+                              }
+                            </optgroup>
+                          }
+                        </select>
+                        @if (mirrorBrokerageHint(row); as hint) {
+                          <div class="mirror-inline-hint">{{ hint }}</div>
                         }
-                      </select>
-                    </td>
+                      </td>
+                      <td class="mirror-pnl-cell">
+                        @if (row.operationType === 'SELL') {
+                          <label class="checkbox-label mirror-checkbox">
+                            <input
+                              type="checkbox"
+                              [ngModel]="row.attachRealizedPnl"
+                              name="mirror-pnl-toggle-{{ row.clientRowId }}"
+                              (ngModelChange)="toggleMirrorRealizedPnl(row, $event)"
+                            />
+                            <span>{{ messages.mirror.attachRealizedPnl }}</span>
+                          </label>
+                          @if (row.attachRealizedPnl) {
+                            <select
+                              class="grid-input compact-grid-input"
+                              [ngModel]="row.realizedPnlTransactionId"
+                              name="mirror-pnl-transaction-{{ row.clientRowId }}"
+                              (ngModelChange)="updateMirrorRealizedPnlTransaction(row, $event)"
+                            >
+                              <option value=""></option>
+                              @for (group of mirrorPnlCandidateGroups(row); track group.label) {
+                                <optgroup [label]="group.label">
+                                  @for (candidate of group.items; track candidate.id) {
+                                    <option [value]="candidate.id">{{ candidate.label }}</option>
+                                  }
+                                </optgroup>
+                              }
+                            </select>
+                          }
+                          <div class="mirror-inline-hint">{{ messages.mirror.sellAttachHint }}</div>
+                        } @else {
+                          <span class="mirror-inline-hint">{{ messages.mirror.notApplicable }}</span>
+                        }
+                      </td>
+                    }
                   </tr>
                   @if (mirrorRowErrors(row).length > 0) {
                     <tr class="draft-error-row">
-                      <td colspan="4">{{ mirrorRowErrors(row).join(' · ') }}</td>
+                      <td [attr.colspan]="mirrorMode() === 'create' ? 5 : 5">{{ mirrorRowErrors(row).join(' · ') }}</td>
                     </tr>
                   }
                 }
@@ -388,49 +519,204 @@ const INSERT_COLUMN_COUNT = 8;
       align-items: start;
     }
 
+    .page-warning {
+      border-color: color-mix(in srgb, var(--warning, #b7791f) 35%, var(--border));
+      display: grid;
+      gap: 6px;
+    }
+
+    .page-warning p {
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .investment-insert-col-date {
+      width: 124px;
+    }
+
     .field-hint {
       color: var(--muted);
       font-size: 0.9rem;
       margin: 0;
+    }
+
+    .insert-preview-state {
+      margin-top: 12px;
+      padding: 16px 18px;
+    }
+
+    .insert-table-wrap {
+      background: transparent;
+      border: 0;
+      border-radius: inherit;
+      box-shadow: none;
+    }
+
+    .insert-table-shell {
+      min-height: 0;
+    }
+
+    .insert-preview-wrap {
+      margin: 12px 0 0;
+      max-width: none;
+      width: 100%;
+    }
+
+    .insert-preview-asset-column {
+      min-width: 240px;
+      width: 32%;
+    }
+
+    .investment-insert-col-asset {
+      width: 14%;
+    }
+
+    .investment-insert-col-type {
+      width: 108px;
+    }
+
+    .investment-insert-col-account {
+      width: 19%;
+    }
+
+    .investment-insert-actions-cell {
+      padding-left: 14px;
+    }
+
+    .insert-preview-state strong,
+    .insert-preview-state p {
+      color: var(--warning, #b7791f);
+    }
+
+    .mirror-summary-cell {
+      white-space: normal;
+    }
+
+    .mirror-summary-cell div + div {
+      margin-top: 4px;
+    }
+
+    .mirror-table-attach {
+      table-layout: auto;
+      width: 100%;
+    }
+
+    .mirror-table-attach .mirror-transaction-cell {
+      min-width: 340px;
+      width: 36%;
+    }
+
+    .mirror-table-attach .mirror-pnl-cell {
+      min-width: 280px;
+      width: 28%;
+    }
+
+    .mirror-table-attach select {
+      font-size: 0.88rem;
+      min-width: 0;
+      width: 100%;
     }
   `],
 })
 export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   private readonly moneyVisibility = inject(MoneyVisibilityService);
   private readonly referenceData = inject(ReferenceDataService);
+  private readonly userConfigService = inject(UserConfigService);
+  private readonly destroyRef = inject(DestroyRef);
   readonly nav = uiMessages.investments.nav;
   readonly messages = uiMessages.investments.insert;
   readonly rows = signal<DraftOperationRow[]>([]);
   readonly saving = signal(false);
-  readonly assets = signal<InvestmentAsset[]>([]);
-  readonly positions = signal<InvestmentPosition[]>([]);
+  readonly operations = signal<InvestmentOperation[]>([]);
+  readonly positionPreviewRows = signal<InvestmentPositionPreviewRow[]>([]);
+  readonly previewBlocked = signal(false);
+  readonly previewBlockedHint = signal<string | null>(null);
   readonly editingDateRowId = signal<number | null>(null);
   readonly mirrorModalOpen = signal(false);
+  readonly mirrorMode = signal<MirrorMode>('create');
   readonly mirrorRows = signal<MirroredDraftRow[]>([]);
+  readonly mirrorCandidates = signal<MirrorCandidate[]>([]);
+  readonly mirrorPnlCandidates = signal<MirrorCandidate[]>([]);
   readonly activeAccounts = signal<Account[]>([]);
   readonly brokerageAccounts = signal<Account[]>([]);
   readonly investmentAccounts = signal<Account[]>([]);
+  readonly sellAutomationConfigured = computed(() => {
+    const integration = this.userConfigService.investmentIntegrationConfig();
+    return !!integration.sell_gain_category_id && !!integration.sell_loss_category_id;
+  });
 
   private nextId = 1;
   private mirrorSourceApplied = false;
   private mirrorDestinationApplied = false;
+  private readonly previewRowErrors = signal<Record<number, string[]>>({});
+  private readonly previewRequests = new Subject<PreviewRequest>();
 
   constructor(
     private readonly investmentsService: InvestmentsService,
+    private readonly transactionsService: TransactionsService,
     private readonly toast: ToastService,
     private readonly elementRef: ElementRef<HTMLElement>,
-  ) {}
+  ) {
+    this.previewRequests
+      .pipe(
+        debounce((request) => timer(request.immediate ? 0 : 1000)),
+        distinctUntilChanged((left, right) => left.signature === right.signature),
+        switchMap((request) => {
+          if (request.blocked) {
+            return of<PreviewResult>({ position_preview_rows: [], clear: false, blocked: true });
+          }
+          if (!request.payload) {
+            return of<PreviewResult>({ position_preview_rows: [], clear: true, blocked: false });
+          }
+          return this.investmentsService.previewImportOperations(request.payload).pipe(
+            switchMap((preview) => of<PreviewResult>({ ...preview, clear: false, blocked: false })),
+            catchError((error) => {
+              return of(this.previewErrorResult(error));
+            }),
+          );
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({
+        next: (preview) => {
+          this.previewBlocked.set(Boolean(preview.blocked));
+          this.previewBlockedHint.set(preview.message ?? null);
+          this.previewRowErrors.set(preview.rowErrors ?? {});
+          if (preview.blocked) {
+            this.positionPreviewRows.set([]);
+            return;
+          }
+          if (preview.clear || preview.position_preview_rows.length > 0) {
+            this.previewBlocked.set(false);
+            this.previewBlockedHint.set(null);
+            this.previewRowErrors.set({});
+            this.positionPreviewRows.set(preview.position_preview_rows ?? []);
+          }
+        },
+        error: () => {
+          this.previewBlocked.set(false);
+          this.previewBlockedHint.set(null);
+          this.previewRowErrors.set({});
+          this.positionPreviewRows.set([]);
+        },
+      });
+
+    effect(() => {
+      const rows = this.rows();
+      const request = untracked(() => this.buildPositionPreviewRequest(rows, false));
+      this.previewRequests.next(request);
+    });
+  }
 
   ngOnInit(): void {
     this.resetRows();
+
     forkJoin({
-      assets: this.investmentsService.listAssets(),
-      positions: this.investmentsService.listPositions(),
+      operations: this.investmentsService.listOperations(),
       referenceData: this.referenceData.load(),
     }).subscribe({
-      next: ({ assets, positions }) => {
-        this.assets.set(assets);
-        this.positions.set(positions);
+      next: ({ operations }) => {
+        this.operations.set(operations);
         this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
         this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'BROKERAGE'));
         this.investmentAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'INVESTMENT'));
@@ -475,8 +761,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   }
 
   onDateInput(row: DraftOperationRow, value: string): void {
-    row.date = formatDraftDateInput(value);
-    this.rows.update((rows) => [...rows]);
+    this.updateRow(row.id, { date: formatDraftDateInput(value) });
   }
 
   startDateEdit(row: DraftOperationRow, input?: HTMLInputElement): void {
@@ -493,9 +778,8 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   }
 
   finishDateEdit(row: DraftOperationRow): void {
-    row.date = normalizeDraftDate(row.date);
+    this.updateRow(row.id, { date: normalizeDraftDate(row.date) });
     this.editingDateRowId.set(null);
-    this.rows.update((rows) => [...rows]);
   }
 
   dateInputValue(row: DraftOperationRow): string {
@@ -503,59 +787,89 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   }
 
   normalizeDate(row: DraftOperationRow): void {
-    row.date = normalizeDraftDate(row.date);
-    this.rows.update((rows) => [...rows]);
+    this.updateRow(row.id, { date: normalizeDraftDate(row.date) });
   }
 
   normalizeAsset(row: DraftOperationRow): void {
-    row.assetCode = row.assetCode.trim().toUpperCase();
-    this.rows.update((rows) => [...rows]);
+    this.updateRow(row.id, { assetCode: row.assetCode.trim().toUpperCase() });
   }
 
   normalizeQuantity(row: DraftOperationRow): void {
-    row.quantity = row.quantity.replace(/[^\d]/g, '');
-    this.rows.update((rows) => [...rows]);
+    this.updateRow(row.id, { quantity: row.quantity.replace(/[^\d]/g, '') });
   }
 
   onMoneyInput(row: DraftOperationRow, field: 'unitPrice' | 'totalFeeAmount', value: string): void {
     const manualFlag = this.moneyManualFlag(field);
     if (!value.trim()) {
-      row[field] = '';
-      row[manualFlag] = false;
-      this.rows.update((rows) => [...rows]);
+      this.updateRow(row.id, {
+        [field]: '',
+        [manualFlag]: false,
+      } as Pick<DraftOperationRow, typeof field | typeof manualFlag>);
       return;
     }
 
     if (row[manualFlag]) {
-      row[field] = value;
+      const next: Pick<DraftOperationRow, typeof field | typeof manualFlag> = {
+        [field]: value,
+        [manualFlag]: row[manualFlag],
+      } as Pick<DraftOperationRow, typeof field | typeof manualFlag>;
       if (!value.includes(',')) {
-        row[manualFlag] = false;
+        next[manualFlag] = false;
       }
-      this.rows.update((rows) => [...rows]);
+      this.updateRow(row.id, next);
       return;
     }
 
-    row[field] = formatAmountDigitsAsCents(value);
-    this.rows.update((rows) => [...rows]);
+    this.updateRow(row.id, { [field]: formatAmountDigitsAsCents(value) } as Pick<DraftOperationRow, typeof field>);
   }
 
   finishMoneyEdit(row: DraftOperationRow, field: 'unitPrice' | 'totalFeeAmount'): void {
-    row[field] = normalizeDraftAmount(row[field]);
     const manualFlag = this.moneyManualFlag(field);
-    row[manualFlag] = row[field].includes(',');
-    this.rows.update((rows) => [...rows]);
+    const normalized = normalizeDraftAmount(row[field]);
+    this.updateRow(row.id, {
+      [field]: normalized,
+      [manualFlag]: normalized.includes(','),
+    } as Pick<DraftOperationRow, typeof field | typeof manualFlag>);
   }
 
   normalizeMoney(row: DraftOperationRow, field: 'unitPrice' | 'totalFeeAmount'): void {
     if (!row[field].trim()) {
-      row[field] = '';
-      row[this.moneyManualFlag(field)] = false;
-      this.rows.update((rows) => [...rows]);
+      const manualFlag = this.moneyManualFlag(field);
+      this.updateRow(row.id, {
+        [field]: '',
+        [manualFlag]: false,
+      } as Pick<DraftOperationRow, typeof field | typeof manualFlag>);
       return;
     }
-    row[field] = normalizeDraftAmount(row[field]);
-    row[this.moneyManualFlag(field)] = row[field].includes(',');
-    this.rows.update((rows) => [...rows]);
+    const manualFlag = this.moneyManualFlag(field);
+    const normalized = normalizeDraftAmount(row[field]);
+    this.updateRow(row.id, {
+      [field]: normalized,
+      [manualFlag]: normalized.includes(','),
+    } as Pick<DraftOperationRow, typeof field | typeof manualFlag>);
+  }
+
+  updateAssetCode(row: DraftOperationRow, value: string): void {
+    this.updateRow(row.id, { assetCode: value });
+  }
+
+  updateQuantity(row: DraftOperationRow, value: string): void {
+    this.updateRow(row.id, { quantity: value });
+  }
+
+  onOperationTypeChange(row: DraftOperationRow, value: InvestmentOperationType | ''): void {
+    this.updateRow(row.id, { operationType: value });
+    this.requestPreviewNow();
+  }
+
+  onBrokerageAccountCodeChange(row: DraftOperationRow, value: string): void {
+    this.updateRow(row.id, { brokerageAccountCode: value });
+    this.requestPreviewNow();
+  }
+
+  onInvestmentAccountCodeChange(row: DraftOperationRow, value: string): void {
+    this.updateRow(row.id, { investmentAccountCode: value });
+    this.requestPreviewNow();
   }
 
   handlePaste(event: ClipboardEvent, startRowIndex: number, startColumnIndex: number): void {
@@ -622,6 +936,13 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   }
 
   rowValidation(row: DraftOperationRow): RowValidation {
+    const validation = this.localRowValidation(row);
+    validation.errors.push(...(this.previewRowErrors()[row.id] ?? []));
+    validation.valid = validation.errors.length === 0;
+    return validation;
+  }
+
+  private localRowValidation(row: DraftOperationRow): RowValidation {
     if (this.isEmpty(row)) {
       return { valid: true, errors: [] };
     }
@@ -653,29 +974,12 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     if (decimalToCents(row.totalFeeAmount) < 0) {
       errors.push('Taxa total inválida');
     }
+    const feeConflict = this.sameDayBrokerageFeeConflict(row);
+    if (feeConflict) {
+      errors.push(feeConflict);
+    }
 
     return { valid: errors.length === 0, errors };
-  }
-
-  rowGroupingWarning(row: DraftOperationRow): string {
-    if (this.isEmpty(row)) {
-      return '';
-    }
-
-    const dateKey = normalizedDateKey(row.date);
-    if (!dateKey) {
-      return '';
-    }
-
-    const sameDateRows = this.filledRows().filter((candidate) => normalizedDateKey(candidate.date) === dateKey);
-    const distinctFeeValues = Array.from(
-      new Set(sameDateRows.map((candidate) => decimalToCents(candidate.totalFeeAmount))),
-    );
-    if (distinctFeeValues.length <= 1) {
-      return '';
-    }
-
-    return 'Taxas diferentes nesta data serão rateadas em grupos separados.';
   }
 
   canSubmit(): boolean {
@@ -688,88 +992,16 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       return;
     }
     const filled = this.filledRows();
-    const mirroredCandidates = filled.filter((row) => row.operationType !== 'BONIFICATION');
+    const mirroredCandidates = filled.filter((row) => row.operationType === 'BUY' || row.operationType === 'SELL');
     if (mirroredCandidates.length > 0 && window.confirm(this.messages.mirror.confirm)) {
+      if (!this.sellAutomationConfigured() && mirroredCandidates.some((row) => row.operationType === 'SELL')) {
+        this.toast.error(this.messages.mirror.sellConfigRequired);
+        return;
+      }
       this.openMirrorModal(mirroredCandidates);
       return;
     }
     this.submitImport(false, []);
-  }
-
-  positionPreviewRows(): PositionPreviewRow[] {
-    const validRows = this.filledRows()
-      .filter((row) => this.rowValidation(row).valid)
-      .map((row, index) => ({
-        row,
-        index,
-        asset: this.assetByCode(row.assetCode),
-        dateKey: normalizedDateKey(row.date)!,
-        quantity: Number(row.quantity),
-        unitPrice: decimalToCents(row.unitPrice),
-        totalFeeAmount: decimalToCents(row.totalFeeAmount),
-      }));
-
-    if (validRows.length === 0) {
-      return [];
-    }
-
-    const allocatedFees = allocatePreviewFees(validRows);
-    const currentByAsset = new Map<string, { name: string; quantity: number; costBasis: number }>();
-    for (const position of this.positions()) {
-      currentByAsset.set(position.asset_code, {
-        name: position.asset_name,
-        quantity: position.current_quantity,
-        costBasis: position.total_cost_basis,
-      });
-    }
-
-    validRows.sort((left, right) => {
-      const leftDate = brazilianDateToQuery(left.row.date);
-      const rightDate = brazilianDateToQuery(right.row.date);
-      if (leftDate === rightDate) {
-        return left.index - right.index;
-      }
-      return leftDate.localeCompare(rightDate);
-    });
-
-    const projectedByAsset = new Map<string, PositionPreviewRow>();
-    for (const item of validRows) {
-      const assetCode = item.row.assetCode;
-      const current = projectedByAsset.get(assetCode) ?? (() => {
-        const existing = currentByAsset.get(assetCode);
-        return {
-          assetCode,
-          assetName: item.asset?.name ?? assetCode,
-          currentQuantity: existing?.quantity ?? 0,
-          draftChange: 0,
-          projectedQuantity: existing?.quantity ?? 0,
-          currentAveragePrice: existing?.quantity ? divideRounded(existing.costBasis, existing.quantity) : 0,
-          projectedAveragePrice: existing?.quantity ? divideRounded(existing.costBasis, existing.quantity) : 0,
-        } satisfies PositionPreviewRow;
-      })();
-
-      let projectedCostBasis = current.projectedQuantity * current.projectedAveragePrice;
-      const grossAmount = item.quantity * item.unitPrice;
-      const allocatedFee = allocatedFees.get(item.row.id) ?? 0;
-      if (item.row.operationType === 'BUY' || item.row.operationType === 'BONIFICATION') {
-        current.projectedQuantity += item.quantity;
-        projectedCostBasis += grossAmount + allocatedFee;
-      } else if (item.row.operationType === 'SELL') {
-        if (current.projectedQuantity > 0) {
-          const sellCostBasis = divideRounded(projectedCostBasis*item.quantity, current.projectedQuantity);
-          current.projectedQuantity -= item.quantity;
-          projectedCostBasis -= sellCostBasis;
-        } else {
-          current.projectedQuantity -= item.quantity;
-          projectedCostBasis = 0;
-        }
-      }
-      current.draftChange = current.projectedQuantity - current.currentQuantity;
-      current.projectedAveragePrice = current.projectedQuantity > 0 ? divideRounded(projectedCostBasis, current.projectedQuantity) : 0;
-      projectedByAsset.set(assetCode, current);
-    }
-
-    return Array.from(projectedByAsset.values()).sort((left, right) => left.assetCode.localeCompare(right.assetCode));
   }
 
   money(value: number): string {
@@ -780,12 +1012,93 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     return investmentAssetLabel(code, name);
   }
 
+  mirrorCandidateGroups(row: MirroredDraftRow): MirrorCandidateGroup[] {
+    const brokerageCode = row.brokerageAccountCode.trim().toLowerCase();
+    const filtered = this.mirrorCandidates().filter((candidate) =>
+      !brokerageCode
+      || candidate.accountCode.trim().toLowerCase() === brokerageCode
+      || candidate.transferAccountCode.trim().toLowerCase() === brokerageCode,
+    );
+    const allTransfers = [...filtered].sort((left, right) => right.date.localeCompare(left.date));
+    const nearbyTransfers = filtered
+      .filter((candidate) => daysBetweenIsoDates(candidate.date, isoFromDraftDate(row.date)) <= 7)
+      .sort((left, right) => {
+        const leftDistance = daysBetweenIsoDates(left.date, isoFromDraftDate(row.date));
+        const rightDistance = daysBetweenIsoDates(right.date, isoFromDraftDate(row.date));
+        if (leftDistance === rightDistance) {
+          return right.date.localeCompare(left.date);
+        }
+        return leftDistance - rightDistance;
+      });
+
+    const groups: MirrorCandidateGroup[] = [];
+    if (nearbyTransfers.length > 0) {
+      groups.push({ label: 'Transferências perto da data', items: nearbyTransfers });
+    }
+    groups.push({ label: 'Todas as transferências', items: allTransfers });
+    return groups;
+  }
+
+  mirrorBrokerageHint(row: MirroredDraftRow): string {
+    if (!row.brokerageAccountCode) {
+      return '';
+    }
+    return `Filtrando pela conta corretora: ${this.referenceData.accountName(row.brokerageAccountCode)}`;
+  }
+
+  mirrorSummaryLines(row: MirroredDraftRow): string[] {
+    const lines = [`${this.messages.mirror.transferAmount}: ${this.money(row.netAmount)}`];
+    if (row.operationType === 'SELL') {
+      lines.push(`${this.messages.mirror.realizedPnlAmount}: ${this.money(row.realizedPnlAmount)}`);
+      lines.push(`${this.messages.mirror.saleNetAmount}: ${this.money(row.netAmount + row.realizedPnlAmount)}`);
+    }
+    return lines;
+  }
+
+  mirrorPnlCandidateGroups(row: MirroredDraftRow): MirrorCandidateGroup[] {
+    const brokerageCode = row.brokerageAccountCode.trim().toLowerCase();
+    const expectsPositivePnl = row.realizedPnlAmount >= 0;
+    const filtered = this.mirrorPnlCandidates().filter((candidate) => {
+      if (brokerageCode && candidate.accountCode.trim().toLowerCase() !== brokerageCode) {
+        return false;
+      }
+      return expectsPositivePnl ? candidate.amount >= 0 : candidate.amount < 0;
+    });
+    const allCandidates = [...filtered].sort((left, right) => right.date.localeCompare(left.date));
+    const nearbyCandidates = filtered
+      .filter((candidate) => daysBetweenIsoDates(candidate.date, isoFromDraftDate(row.date)) <= 7)
+      .sort((left, right) => {
+        const leftDistance = daysBetweenIsoDates(left.date, isoFromDraftDate(row.date));
+        const rightDistance = daysBetweenIsoDates(right.date, isoFromDraftDate(row.date));
+        if (leftDistance === rightDistance) {
+          return right.date.localeCompare(left.date);
+        }
+        return leftDistance - rightDistance;
+      });
+
+    const groups: MirrorCandidateGroup[] = [];
+    if (nearbyCandidates.length > 0) {
+      groups.push({ label: 'Resultados perto da data', items: nearbyCandidates });
+    }
+    groups.push({ label: 'Todos os resultados', items: allCandidates });
+    return groups;
+  }
+
   private filledRows(): DraftOperationRow[] {
     return this.rows().filter((row) => !this.isEmpty(row));
   }
 
   mirrorRowErrors(row: MirroredDraftRow): string[] {
     const errors: string[] = [];
+    if (this.mirrorMode() === 'attach') {
+      if (!row.transactionId) {
+        errors.push('Transferência obrigatória');
+      }
+      if (row.operationType === 'SELL' && row.attachRealizedPnl && !row.realizedPnlTransactionId) {
+        errors.push('Resultado obrigatório');
+      }
+      return errors;
+    }
     if (!row.sourceAccountCode) {
       errors.push('Conta origem obrigatória');
     }
@@ -808,6 +1121,8 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     }
     this.mirrorModalOpen.set(false);
     this.mirrorRows.set([]);
+    this.mirrorCandidates.set([]);
+    this.mirrorPnlCandidates.set([]);
   }
 
   updateMirrorAccount(row: MirroredDraftRow, field: 'sourceAccountCode' | 'destinationAccountCode', value: string): void {
@@ -830,9 +1145,46 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     this.mirrorRows.update((rows) => [...rows]);
   }
 
+  updateMirrorTransaction(row: MirroredDraftRow, value: string): void {
+    row.transactionId = value.trim();
+    this.mirrorRows.update((rows) => [...rows]);
+  }
+
+  toggleMirrorRealizedPnl(row: MirroredDraftRow, value: boolean): void {
+    row.attachRealizedPnl = Boolean(value);
+    if (!row.attachRealizedPnl) {
+      row.realizedPnlTransactionId = '';
+    }
+    this.mirrorRows.update((rows) => [...rows]);
+  }
+
+  updateMirrorRealizedPnlTransaction(row: MirroredDraftRow, value: string): void {
+    row.realizedPnlTransactionId = value.trim();
+    this.mirrorRows.update((rows) => [...rows]);
+  }
+
   submitMirroredImport(): void {
     if (!this.canSubmitMirrorRows()) {
       return;
+    }
+    if (this.mirrorMode() === 'attach') {
+      const mismatches = this.mirrorRows()
+        .map((row) => {
+          const candidate = this.mirrorCandidates().find((item) => item.id === row.transactionId);
+          if (!candidate || candidate.amount === row.netAmount) {
+            return null;
+          }
+          return `${row.description}: ${this.money(candidate.amount)} -> ${this.money(row.netAmount)}`;
+        })
+        .filter((item): item is string => Boolean(item));
+      if (mismatches.length > 0) {
+        const shouldContinue = window.confirm(
+          `As transferências selecionadas terão seus valores ajustados para seguir as operações:\n\n${mismatches.join('\n')}\n\nDeseja continuar?`,
+        );
+        if (!shouldContinue) {
+          return;
+        }
+      }
     }
     this.submitImport(true, this.mirrorRows());
   }
@@ -853,14 +1205,55 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   private openMirrorModal(rows: DraftOperationRow[]): void {
     this.mirrorSourceApplied = false;
     this.mirrorDestinationApplied = false;
-    this.mirrorRows.set(rows.map((row) => ({
-      clientRowId: this.clientRowId(row),
-      date: normalizeDraftDate(row.date),
-      description: mirrorDescription(row),
-      sourceAccountCode: '',
-      destinationAccountCode: '',
-    })));
+    this.mirrorMode.set('create');
+    this.mirrorRows.set(buildGroupedMirrorDraftRows(rows, this.operations()));
+    this.mirrorCandidates.set([]);
+    this.mirrorPnlCandidates.set([]);
     this.mirrorModalOpen.set(true);
+
+    const brokerageAccountCodes = Array.from(
+      new Set(rows.map((row) => row.brokerageAccountCode.trim()).filter((code) => code.length > 0)),
+    );
+    forkJoin({
+      transfers: this.transactionsService.list({
+        operation: 'transfer',
+        account_code: brokerageAccountCodes,
+        limit: 1000,
+      }),
+      pnl: this.transactionsService.list({
+        operation: ['credit', 'debit'],
+        account_code: brokerageAccountCodes,
+        limit: 1000,
+      }),
+    }).subscribe({
+      next: ({ transfers, pnl }) => {
+        this.mirrorCandidates.set(
+          (transfers.transactions ?? [])
+            .filter((tx) => Boolean(tx.transfer_id) && tx.account_transfer && !tx.is_investment_operation_mirror)
+            .map((tx) => ({
+              id: tx.id,
+              amount: Math.abs(tx.amount),
+              date: tx.date,
+              accountCode: tx.account_code,
+              transferAccountCode: tx.account_transfer ?? '',
+              label: buildCompactMirrorOptionLabel(tx.date, tx.description, tx.amount),
+            })),
+        );
+        this.mirrorPnlCandidates.set(
+          (pnl.transactions ?? [])
+            .filter((tx) => !tx.transfer_id && !tx.is_investment_operation_mirror)
+            .map((tx) => ({
+              id: tx.id,
+              amount: tx.amount,
+              date: tx.date,
+              accountCode: tx.account_code,
+              transferAccountCode: '',
+              label: buildCompactMirrorOptionLabel(tx.date, tx.description, tx.amount),
+            })),
+        );
+      },
+      error: (error) => this.toast.error(getApiErrorMessage(error)),
+    });
   }
 
   private submitImport(createMirroredTransactions: boolean, mirroredRows: MirroredDraftRow[]): void {
@@ -884,6 +1277,8 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
         client_row_id: row.clientRowId,
         source_account_code: row.sourceAccountCode,
         destination_account_code: row.destinationAccountCode,
+        transaction_id: row.transactionId || null,
+        realized_pnl_transaction_id: row.attachRealizedPnl ? (row.realizedPnlTransactionId || null) : null,
       })),
     }).subscribe({
       next: (result) => {
@@ -894,15 +1289,14 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
         );
         this.mirrorModalOpen.set(false);
         this.mirrorRows.set([]);
+        this.mirrorPnlCandidates.set([]);
         this.resetRows();
         forkJoin({
-          assets: this.investmentsService.listAssets(),
-          positions: this.investmentsService.listPositions(),
+          operations: this.investmentsService.listOperations(),
           referenceData: this.referenceData.reload(),
         }).subscribe({
-          next: ({ assets, positions }) => {
-            this.assets.set(assets);
-            this.positions.set(positions);
+          next: ({ operations }) => {
+            this.operations.set(operations);
             this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
             this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'BROKERAGE'));
             this.investmentAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'INVESTMENT'));
@@ -929,9 +1323,31 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       quantity: '',
       unitPrice: '',
       unitPriceManualDecimal: false,
-      totalFeeAmount: '0,00',
+      totalFeeAmount: '',
       totalFeeAmountManualDecimal: false,
     };
+  }
+
+  private updateRow(rowID: number, patch: Partial<DraftOperationRow>): void {
+    let changed = false;
+    this.rows.update((rows) => rows.map((row) => {
+      if (row.id !== rowID) {
+        return row;
+      }
+
+      for (const [key, value] of Object.entries(patch)) {
+        if (row[key as keyof DraftOperationRow] !== value) {
+          changed = true;
+          break;
+        }
+      }
+
+      return changed ? { ...row, ...patch } : row;
+    }));
+
+    if (changed) {
+      this.resetPreviewValidationFeedback();
+    }
   }
 
   private isEmpty(row: DraftOperationRow): boolean {
@@ -980,11 +1396,6 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
 
   private moneyManualFlag(field: 'unitPrice' | 'totalFeeAmount'): 'unitPriceManualDecimal' | 'totalFeeAmountManualDecimal' {
     return field === 'unitPrice' ? 'unitPriceManualDecimal' : 'totalFeeAmountManualDecimal';
-  }
-
-  private assetByCode(code: string): InvestmentAsset | undefined {
-    const normalized = code.trim().toUpperCase();
-    return this.assets().find((asset) => asset.code === normalized);
   }
 
   private resolveBrokerageAccountPasteValue(value: string): string {
@@ -1041,7 +1452,148 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   }
 
   private clientRowId(row: DraftOperationRow): string {
-    return `row-${row.id}`;
+    return mirrorDraftRowId(row.id);
+  }
+
+  requestPreviewNow(): void {
+    this.previewRequests.next(this.buildPositionPreviewRequest(this.rows(), true));
+  }
+
+  private buildPositionPreviewRequest(rows: DraftOperationRow[], immediate: boolean): PreviewRequest {
+    const filledRows = rows.filter((row) => !this.isEmpty(row));
+    if (filledRows.length === 0) {
+      return { signature: 'empty', payload: null, immediate, blocked: false };
+    }
+
+    const invalidRows = filledRows.filter((row) => !this.localRowValidation(row).valid);
+    if (invalidRows.length > 0) {
+      return {
+        signature: this.previewBlockedSignature(filledRows),
+        payload: null,
+        immediate,
+        blocked: true,
+      };
+    }
+
+    const operations = filledRows.map((row) => ({
+      client_row_id: this.clientRowId(row),
+      asset_code: row.assetCode.trim().toUpperCase(),
+      brokerage_account_code: row.brokerageAccountCode.trim(),
+      investment_account_code: row.investmentAccountCode.trim(),
+      operation_type: row.operationType as InvestmentOperationType,
+      date: dateInputToIso(brazilianDateToQuery(row.date)),
+      quantity: Number(row.quantity),
+      unit_price: decimalToCents(row.unitPrice),
+      total_fee_amount: decimalToCents(row.totalFeeAmount),
+      notes: '',
+    }));
+
+    return {
+      signature: JSON.stringify(operations),
+      payload: {
+        operations,
+        create_mirrored_transactions: false,
+        mirrored_transactions: [],
+      },
+      immediate,
+      blocked: false,
+    };
+  }
+
+  private sameDayBrokerageFeeConflict(row: DraftOperationRow): string {
+    if (this.isEmpty(row)) {
+      return '';
+    }
+    const dateKey = normalizedDateKey(row.date);
+    const brokerageCode = row.brokerageAccountCode.trim().toLocaleLowerCase('pt-BR');
+    if (!dateKey || !brokerageCode) {
+      return '';
+    }
+
+    const groupRows = this.rows().filter((candidate) =>
+      !this.isEmpty(candidate)
+      && normalizedDateKey(candidate.date) === dateKey
+      && candidate.brokerageAccountCode.trim().toLocaleLowerCase('pt-BR') === brokerageCode,
+    );
+    const distinctFeeValues = Array.from(
+      new Set(groupRows.map((candidate) => decimalToCents(candidate.totalFeeAmount))),
+    );
+    return distinctFeeValues.length > 1 ? this.messages.states.sameDayBrokerageFeeConflict : '';
+  }
+
+  private previewBlockedSignature(rows: DraftOperationRow[]): string {
+    return JSON.stringify(rows.map((row) => ({
+      id: row.id,
+      date: row.date,
+      brokerage: row.brokerageAccountCode,
+      fee: row.totalFeeAmount,
+      asset: row.assetCode,
+      quantity: row.quantity,
+      type: row.operationType,
+      investment: row.investmentAccountCode,
+      unitPrice: row.unitPrice,
+    })));
+  }
+
+  private previewErrorResult(error: unknown): PreviewResult {
+    const rowErrors = this.previewRowErrorsFromApiError(error);
+    return {
+      position_preview_rows: [],
+      clear: false,
+      blocked: true,
+      rowErrors,
+      message: Object.keys(rowErrors).length > 0 ? null : getApiErrorMessage(error),
+    };
+  }
+
+  private previewRowErrorsFromApiError(error: unknown): Record<number, string[]> {
+    if (getApiErrorCode(error) !== 'investment.operation.sell.exceeds.position') {
+      return {};
+    }
+
+    const details = getApiErrorDetails(error);
+    const clientRowIDValue = details?.['client_row_id'];
+    const clientRowID = typeof clientRowIDValue === 'string' ? clientRowIDValue.trim() : '';
+    if (!clientRowID) {
+      return {};
+    }
+
+    const row = this.rows().find((candidate) => this.clientRowId(candidate) === clientRowID);
+    if (!row) {
+      return {};
+    }
+
+    const attemptedQuantity = this.integerDetailValue(details?.['attempted_quantity']);
+    const availableQuantity = this.integerDetailValue(details?.['available_quantity']);
+
+    return {
+      [row.id]: [this.sellExceedsPositionMessage(attemptedQuantity, availableQuantity)],
+    };
+  }
+
+  private resetPreviewValidationFeedback(): void {
+    this.previewBlockedHint.set(null);
+    this.previewRowErrors.set({});
+  }
+
+  private sellExceedsPositionMessage(attemptedQuantity: number | null, availableQuantity: number | null): string {
+    if (attemptedQuantity == null || availableQuantity == null) {
+      return this.messages.states.sellExceedsPosition
+        .replace('{attempted}', '?')
+        .replace('{available}', '?');
+    }
+
+    return this.messages.states.sellExceedsPosition
+      .replace('{attempted}', this.integerQuantity(attemptedQuantity))
+      .replace('{available}', this.integerQuantity(availableQuantity));
+  }
+
+  private integerDetailValue(value: unknown): number | null {
+    return typeof value === 'number' && Number.isInteger(value) ? value : null;
+  }
+
+  private integerQuantity(value: number): string {
+    return value.toLocaleString('pt-BR');
   }
 }
 
@@ -1112,11 +1664,24 @@ function normalizedDateKey(value: string): string | null {
 }
 
 function normalizeDraftAmount(value: string): string {
-  if (!value.trim()) {
+  const normalized = value.trim();
+  if (!normalized) {
     return '';
   }
-  const cents = decimalToCents(value);
-  return centsToDecimal(cents).replace('.', ',');
+
+  if (/^\d+(?:\.\d{3})*(,\d{2})$/.test(normalized)) {
+    return normalized;
+  }
+
+  if (/^\d+(?:\.\d{3})*$/.test(normalized)) {
+    return `${normalized},00`;
+  }
+
+  if (/^\d+(?:\.\d{3})*,\d$/.test(normalized)) {
+    return `${normalized}0`;
+  }
+
+  return normalized;
 }
 
 function formatAmountDigitsAsCents(value: string): string {
@@ -1135,10 +1700,39 @@ function stripLeadingZeros(value: string): string {
   return normalized === '' ? '0' : normalized;
 }
 
+function buildCompactMirrorOptionLabel(date: string, description: string, amount: number): string {
+  const compactDescription = truncateMirrorOptionDescription(description, MIRROR_OPTION_DESCRIPTION_MAX_CHARS);
+  return `${toCompactMirrorOptionDate(date)}${MIRROR_OPTION_SEPARATOR}${compactDescription}${MIRROR_OPTION_SEPARATOR}${toCompactMirrorOptionAmount(amount)}`;
+}
+
+function truncateMirrorOptionDescription(description: string, maxChars: number): string {
+  const normalized = description.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  if (maxChars <= 3) {
+    return normalized.slice(0, maxChars);
+  }
+  return `${normalized.slice(0, maxChars - 3)}...`;
+}
+
+function toCompactMirrorOptionDate(value: string): string {
+  const isoDate = value.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
+    return value;
+  }
+  return `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}/${isoDate.slice(2, 4)}`;
+}
+
+function toCompactMirrorOptionAmount(amount: number): string {
+  return centsToCurrency(Math.abs(amount)).replace(/\u00a0/g, ' ');
+}
+
 function allocatePreviewFees(
   rows: Array<{
     row: DraftOperationRow;
     dateKey: string;
+    brokerageAccountCode: string;
     quantity: number;
     unitPrice: number;
     totalFeeAmount: number;
@@ -1147,7 +1741,7 @@ function allocatePreviewFees(
   const result = new Map<number, number>();
   const grouped = new Map<string, typeof rows>();
   for (const row of rows) {
-    const groupKey = `${row.dateKey}:${row.totalFeeAmount}`;
+    const groupKey = `${row.dateKey}:${row.brokerageAccountCode.trim().toLocaleLowerCase('pt-BR')}`;
     const current = grouped.get(groupKey) ?? [];
     current.push(row);
     grouped.set(groupKey, current);
@@ -1181,10 +1775,202 @@ function divideRounded(numerator: number, denominator: number): number {
 }
 
 function mirrorDescription(row: DraftOperationRow): string {
-  const normalizedCode = row.assetCode.trim().toUpperCase();
-  const quantity = Number(row.quantity) || 0;
-  if (row.operationType === 'SELL') {
+  return mirrorDescriptionFromType(row.operationType, Number(row.quantity) || 0, row.assetCode);
+}
+
+function mirrorDescriptionFromType(
+  operationType: InvestmentOperationType | '',
+  quantity: number,
+  assetCode: string,
+): string {
+  const normalizedCode = assetCode.trim().toUpperCase();
+  if (operationType === 'SELL') {
     return `VENDA DE ${quantity} ${normalizedCode}`;
   }
   return `COMPRA DE ${quantity} ${normalizedCode}`;
+}
+
+function draftCashMovementGroupKey(row: DraftOperationRow): string {
+  const dateKey = normalizedDateKey(row.date);
+  return [
+    dateKey,
+    row.brokerageAccountCode.trim().toLocaleLowerCase('pt-BR'),
+    row.investmentAccountCode.trim().toLocaleLowerCase('pt-BR'),
+    row.assetCode.trim().toUpperCase(),
+    row.operationType,
+  ].join('|');
+}
+
+function buildGroupedMirrorDraftRows(rows: DraftOperationRow[], existingOperations: InvestmentOperation[]): MirroredDraftRow[] {
+  const allocatedFees = allocatePreviewFees(rows
+    .filter((row) => row.operationType !== 'BONIFICATION')
+    .map((row) => ({
+      row,
+      dateKey: normalizedDateKey(row.date) ?? '',
+      brokerageAccountCode: row.brokerageAccountCode,
+      quantity: Number(row.quantity) || 0,
+      unitPrice: decimalToCents(row.unitPrice),
+      totalFeeAmount: decimalToCents(row.totalFeeAmount),
+    }))
+    .filter((row) => row.dateKey && row.brokerageAccountCode.trim().length > 0),
+  );
+  const currentByAsset = new Map<string, { quantity: number; costBasis: number }>();
+  const grouped = new Map<string, MirroredDraftRow>();
+
+  const timeline = [
+    ...existingOperations.map((operation) => ({
+      kind: 'existing' as const,
+      date: operation.date.slice(0, 10),
+      createdAt: operation.created_at,
+      id: operation.id,
+      operation,
+    })),
+    ...rows
+      .map((row, index) => ({
+        kind: 'draft' as const,
+        date: brazilianDateToQuery(row.date),
+        createdAt: '',
+        id: String(index),
+        index,
+        row,
+      }))
+      .filter((item) => item.row.operationType === 'BUY' || item.row.operationType === 'SELL'),
+  ].sort((left, right) => {
+    if (left.date === right.date) {
+      if (left.kind !== right.kind) {
+        return left.kind === 'existing' ? -1 : 1;
+      }
+      if (left.kind === 'existing' && right.kind === 'existing') {
+        if (left.createdAt === right.createdAt) {
+          return left.id.localeCompare(right.id);
+        }
+        return left.createdAt.localeCompare(right.createdAt);
+      }
+      if (left.kind === 'draft' && right.kind === 'draft') {
+        return left.index - right.index;
+      }
+      return 0;
+    }
+    return left.date.localeCompare(right.date);
+  });
+
+  for (const item of timeline) {
+    if (item.kind === 'existing') {
+      const operation = item.operation;
+      const assetCode = operation.asset_code.trim().toUpperCase();
+      const currentState = currentByAsset.get(assetCode) ?? { quantity: 0, costBasis: 0 };
+      if (operation.operation_type === 'BUY' || operation.operation_type === 'BONIFICATION') {
+        currentState.quantity += operation.quantity;
+        currentState.costBasis += operation.net_amount;
+      } else if (operation.operation_type === 'SELL') {
+        if (currentState.quantity > 0) {
+          const releasedCostBasis = operation.quantity === currentState.quantity
+            ? currentState.costBasis
+            : divideRounded(currentState.costBasis * operation.quantity, currentState.quantity);
+          currentState.quantity -= operation.quantity;
+          currentState.costBasis -= releasedCostBasis;
+          if (currentState.quantity <= 0) {
+            currentState.quantity = 0;
+            currentState.costBasis = 0;
+          }
+        }
+      }
+      currentByAsset.set(assetCode, currentState);
+      continue;
+    }
+
+    const row = item.row;
+    if (row.operationType !== 'BUY' && row.operationType !== 'SELL') {
+      continue;
+    }
+    const groupKey = draftCashMovementGroupKey(row);
+    const quantity = Number(row.quantity) || 0;
+    const unitPrice = decimalToCents(row.unitPrice);
+    const allocatedFee = allocatedFees.get(row.id) ?? 0;
+    const assetCode = row.assetCode.trim().toUpperCase();
+    const currentState = currentByAsset.get(assetCode) ?? { quantity: 0, costBasis: 0 };
+    let netAmount = quantity * unitPrice + allocatedFee;
+    let realizedPnlAmount = 0;
+
+    if (row.operationType === 'SELL') {
+      const saleNetAmount = quantity * unitPrice - allocatedFee;
+      if (currentState.quantity > 0) {
+        netAmount = quantity === currentState.quantity
+          ? currentState.costBasis
+          : divideRounded(currentState.costBasis * quantity, currentState.quantity);
+        realizedPnlAmount = saleNetAmount - netAmount;
+        currentState.quantity -= quantity;
+        currentState.costBasis -= netAmount;
+        if (currentState.quantity <= 0) {
+          currentState.quantity = 0;
+          currentState.costBasis = 0;
+        }
+      } else {
+        netAmount = 0;
+        realizedPnlAmount = saleNetAmount;
+      }
+    } else {
+      currentState.quantity += quantity;
+      currentState.costBasis += netAmount;
+    }
+    currentByAsset.set(assetCode, currentState);
+
+    const current = grouped.get(groupKey);
+    if (!current) {
+      grouped.set(groupKey, {
+        clientRowId: mirrorDraftRowId(row.id),
+        groupKey,
+        operationType: row.operationType,
+        brokerageAccountCode: row.brokerageAccountCode,
+        investmentAccountCode: row.investmentAccountCode,
+        date: normalizeDraftDate(row.date),
+        description: mirrorDescriptionFromType(row.operationType, quantity, assetCode),
+        netAmount,
+        realizedPnlAmount,
+        sourceAccountCode: row.operationType === 'SELL' ? row.investmentAccountCode : row.brokerageAccountCode,
+        destinationAccountCode: row.operationType === 'SELL' ? row.brokerageAccountCode : row.investmentAccountCode,
+        transactionId: '',
+        attachRealizedPnl: false,
+        realizedPnlTransactionId: '',
+      });
+      continue;
+    }
+    current.netAmount += netAmount;
+    current.realizedPnlAmount += realizedPnlAmount;
+    current.description = mirrorDescriptionFromType(
+      row.operationType,
+      extractQuantityFromMirrorDescription(current.description) + quantity,
+      assetCode,
+    );
+  }
+  return Array.from(grouped.values());
+}
+
+function extractQuantityFromMirrorDescription(description: string): number {
+  const match = /^(?:COMPRA|VENDA) DE (\d+) /.exec(description);
+  if (!match) {
+    return 0;
+  }
+  return Number(match[1]) || 0;
+}
+
+function mirrorDraftRowId(rowId: number): string {
+  return `row-${rowId}`;
+}
+
+function isoFromDraftDate(value: string): string {
+  const normalized = normalizedDateKey(value);
+  if (!normalized) {
+    return '';
+  }
+  return dateInputToIso(brazilianDateToQuery(normalized));
+}
+
+function daysBetweenIsoDates(left: string, right: string): number {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return Math.abs(Math.round((leftTime - rightTime) / (24 * 60 * 60 * 1000)));
 }

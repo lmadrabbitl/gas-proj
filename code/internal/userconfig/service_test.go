@@ -221,3 +221,74 @@ func TestUpdateConfigPersistsWatchedInvestmentCategoryIDs(t *testing.T) {
 		t.Fatalf("expected stored config to keep 2 watched category ids, got %d", len(stored.Settings.Investments.Integration.WatchedCategoryIDs))
 	}
 }
+
+func TestUpdateConfigPersistsSellPnLCategoryIDs(t *testing.T) {
+	userID := uuid.New()
+	repo := &repositoryStub{}
+	serv := NewService(repo)
+	gainCategoryID := uuid.New()
+	lossCategoryID := uuid.New()
+
+	config, err := serv.UpdateConfig(userID, UpdateConfigRequest{
+		Settings: &UpdateConfigValues{
+			Investments: &UpdateInvestmentsConfig{
+				Integration: &UpdateInvestmentIntegrationConfig{
+					WatchedCategoryIDs: []uuid.UUID{},
+					SellGainCategoryID: &gainCategoryID,
+					SellLossCategoryID: &lossCategoryID,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateConfig returned error: %v", err)
+	}
+
+	if config.Settings.Investments.Integration.SellGainCategoryID == nil || *config.Settings.Investments.Integration.SellGainCategoryID != gainCategoryID {
+		t.Fatalf("expected updated config to persist gain category id")
+	}
+	if config.Settings.Investments.Integration.SellLossCategoryID == nil || *config.Settings.Investments.Integration.SellLossCategoryID != lossCategoryID {
+		t.Fatalf("expected updated config to persist loss category id")
+	}
+
+	stored, err := serv.GetConfig(userID)
+	if err != nil {
+		t.Fatalf("GetConfig returned error: %v", err)
+	}
+
+	if stored.Settings.Investments.Integration.SellGainCategoryID == nil || *stored.Settings.Investments.Integration.SellGainCategoryID != gainCategoryID {
+		t.Fatalf("expected stored config to keep gain category id")
+	}
+	if stored.Settings.Investments.Integration.SellLossCategoryID == nil || *stored.Settings.Investments.Integration.SellLossCategoryID != lossCategoryID {
+		t.Fatalf("expected stored config to keep loss category id")
+	}
+}
+
+func TestUpdateConfigNormalizesNilSellPnLCategoryIDs(t *testing.T) {
+	userID := uuid.New()
+	repo := &repositoryStub{}
+	serv := NewService(repo)
+	nilUUID := uuid.Nil
+
+	config, err := serv.UpdateConfig(userID, UpdateConfigRequest{
+		Settings: &UpdateConfigValues{
+			Investments: &UpdateInvestmentsConfig{
+				Integration: &UpdateInvestmentIntegrationConfig{
+					WatchedCategoryIDs: []uuid.UUID{},
+					SellGainCategoryID: &nilUUID,
+					SellLossCategoryID: nil,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateConfig returned error: %v", err)
+	}
+
+	if config.Settings.Investments.Integration.SellGainCategoryID != nil {
+		t.Fatalf("expected nil UUID gain category to normalize to nil")
+	}
+	if config.Settings.Investments.Integration.SellLossCategoryID != nil {
+		t.Fatalf("expected nil loss category to stay nil")
+	}
+}

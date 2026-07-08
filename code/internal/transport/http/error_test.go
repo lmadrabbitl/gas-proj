@@ -38,6 +38,40 @@ func TestHandleErrorReturnsStructuredAppErrorPayload(t *testing.T) {
 	}
 }
 
+func TestHandleErrorReturnsOptionalDetails(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+
+	HandleError(ctx, appErr.ErrInvalidInputWithCode("investment.operation.sell.exceeds.position", "sell operation exceeds available quantity for asset history", nil).WithDetails(map[string]any{
+		"client_row_id": "row-2",
+		"asset_code":    "VALE3",
+	}))
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	var payload struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Message string         `json:"error"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Error.Code != "investment.operation.sell.exceeds.position" {
+		t.Fatalf("unexpected error code: %#v", payload.Error)
+	}
+	if payload.Error.Details["client_row_id"] != "row-2" || payload.Error.Details["asset_code"] != "VALE3" {
+		t.Fatalf("unexpected details payload: %#v", payload.Error.Details)
+	}
+}
+
 func TestHandleErrorFallsBackToInternalErrorForGenericErrors(t *testing.T) {
 	t.Parallel()
 

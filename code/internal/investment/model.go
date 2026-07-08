@@ -27,6 +27,7 @@ type OperationTransactionLinkRole string
 const (
 	OperationTransactionLinkRoleVisibleTransfer OperationTransactionLinkRole = "VISIBLE_TRANSFER"
 	OperationTransactionLinkRoleHiddenTransfer  OperationTransactionLinkRole = "HIDDEN_TRANSFER"
+	OperationTransactionLinkRoleRealizedPNL     OperationTransactionLinkRole = "REALIZED_PNL"
 )
 
 type Asset struct {
@@ -167,6 +168,11 @@ type OperationRow struct {
 	AssetType              AssetType     `json:"asset_type" gorm:"column:asset_type"`
 	BrokerageAccountCode   *string       `json:"brokerage_account_code" gorm:"column:brokerage_account_code"`
 	InvestmentAccountCode  *string       `json:"investment_account_code" gorm:"column:investment_account_code"`
+	CashMovementGroupKey   string        `json:"cash_movement_group_key" gorm:"-"`
+	CashMovementGroupSize  int           `json:"cash_movement_group_size" gorm:"-"`
+	CashMovementGroupGross int64         `json:"cash_movement_group_gross_amount" gorm:"-"`
+	CashMovementGroupNet   int64         `json:"cash_movement_group_net_amount" gorm:"-"`
+	CashMovementGroupQty   int64         `json:"cash_movement_group_quantity" gorm:"-"`
 	HasLinkedMirror        bool          `json:"has_linked_mirror" gorm:"column:has_linked_mirror"`
 	OperationType          OperationType `json:"operation_type" gorm:"column:operation_type"`
 	Date                   time.Time     `json:"date" gorm:"column:date"`
@@ -194,6 +200,16 @@ type PositionRow struct {
 	CurrentPrice     *int64     `json:"current_price,omitempty"`
 	QuoteUpdatedAt   *time.Time `json:"quote_updated_at,omitempty"`
 	LastRecalculated time.Time  `json:"last_recalculated"`
+}
+
+type PositionPreviewRow struct {
+	AssetCode             string `json:"asset_code"`
+	AssetName             string `json:"asset_name"`
+	CurrentQuantity       int64  `json:"current_quantity"`
+	DraftChange           int64  `json:"draft_change"`
+	ProjectedQuantity     int64  `json:"projected_quantity"`
+	CurrentAveragePrice   int64  `json:"current_average_price"`
+	ProjectedAveragePrice int64  `json:"projected_average_price"`
 }
 
 type PositionQuoteRow struct {

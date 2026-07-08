@@ -27,10 +27,15 @@ func HandleError(c *gin.Context, err error) {
 
 	log.Printf("Error: %v", err)
 
+	body := gin.H{
+		"code":  errorOut.Code,
+		"error": errorOut.Message,
+	}
+	if len(errorOut.Details) > 0 {
+		body["details"] = errorOut.Details
+	}
+
 	c.JSON(errorOut.Status, gin.H{
-		"error": gin.H{
-			"code":  errorOut.Code,
-			"error": errorOut.Message,
-		},
+		"error": body,
 	})
 }

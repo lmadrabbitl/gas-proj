@@ -773,7 +773,14 @@ func (serv *transactionService) ensureMirrorTransactionUpdateAllowed(userID, tra
 	if !dto.IsInvestmentMirror {
 		return nil
 	}
-	if req.Date != nil || req.CategoryCode != nil || req.Description != nil || req.Amount != nil || req.IsTransfer != nil || req.ExcludeFromDashboard != nil {
+	if req.Date != nil ||
+		req.CategoryCode != nil ||
+		req.Description != nil ||
+		req.Amount != nil ||
+		req.AccountCode != nil ||
+		req.IsTransfer != nil ||
+		req.TransferAccountCode != nil ||
+		req.ExcludeFromDashboard != nil {
 		return errors.ErrInvalidInputWithCode("transaction.linked_investment_operation.protected_fields", "linked mirrored transaction fields are protected by the investment operation", nil)
 	}
 	return nil

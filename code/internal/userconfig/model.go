@@ -65,6 +65,8 @@ type InvestmentPortfoliosConfig struct {
 
 type InvestmentIntegrationConfig struct {
 	WatchedCategoryIDs []uuid.UUID `json:"watched_category_ids"`
+	SellGainCategoryID *uuid.UUID  `json:"sell_gain_category_id"`
+	SellLossCategoryID *uuid.UUID  `json:"sell_loss_category_id"`
 }
 
 type UIConfig struct {
@@ -108,6 +110,8 @@ type UpdateInvestmentPortfoliosConfig struct {
 
 type UpdateInvestmentIntegrationConfig struct {
 	WatchedCategoryIDs []uuid.UUID `json:"watched_category_ids"`
+	SellGainCategoryID *uuid.UUID  `json:"sell_gain_category_id"`
+	SellLossCategoryID *uuid.UUID  `json:"sell_loss_category_id"`
 }
 
 type UpdateUIConfig struct {

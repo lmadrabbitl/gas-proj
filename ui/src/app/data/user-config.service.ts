@@ -27,6 +27,8 @@ const DEFAULT_INVESTMENT_PORTFOLIOS_CONFIG: InvestmentPortfoliosConfig = {
 };
 const DEFAULT_INVESTMENT_INTEGRATION_CONFIG: InvestmentIntegrationConfig = {
   watched_category_ids: [],
+  sell_gain_category_id: null,
+  sell_loss_category_id: null,
 };
 const DEFAULT_HIDE_AMOUNTS = false;
 
@@ -198,6 +200,8 @@ export class UserConfigService {
           ...this.config().settings.investments,
           integration: {
             watched_category_ids: [...config.watched_category_ids],
+            sell_gain_category_id: config.sell_gain_category_id ?? null,
+            sell_loss_category_id: config.sell_loss_category_id ?? null,
           },
         },
       },
@@ -237,6 +241,12 @@ export class UserConfigService {
             watched_category_ids:
               config.settings?.investments?.integration?.watched_category_ids?.filter((id) => !!id) ??
               DEFAULT_INVESTMENT_INTEGRATION_CONFIG.watched_category_ids,
+            sell_gain_category_id:
+              config.settings?.investments?.integration?.sell_gain_category_id ??
+              DEFAULT_INVESTMENT_INTEGRATION_CONFIG.sell_gain_category_id,
+            sell_loss_category_id:
+              config.settings?.investments?.integration?.sell_loss_category_id ??
+              DEFAULT_INVESTMENT_INTEGRATION_CONFIG.sell_loss_category_id,
           },
         },
         ui: {

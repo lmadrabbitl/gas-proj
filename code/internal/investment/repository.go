@@ -40,6 +40,7 @@ type Repository interface {
 	DeleteOperationTransactionLinks(db *gorm.DB, userID, operationID uuid.UUID) error
 	UpdateOperation(db *gorm.DB, userID, operationID uuid.UUID, update *UpdateOperationModel) (*Operation, error)
 	DeleteOperation(db *gorm.DB, userID, operationID uuid.UUID) error
+	DeleteOperations(db *gorm.DB, userID uuid.UUID, operationIDs []uuid.UUID) error
 	ListAssetOperations(db *gorm.DB, userID, assetID uuid.UUID) ([]Operation, error)
 	UpsertPosition(db *gorm.DB, position *Position) error
 	DeletePosition(db *gorm.DB, userID, assetID uuid.UUID) error
@@ -526,6 +527,21 @@ func (repo *repository) DeleteOperation(db *gorm.DB, userID, operationID uuid.UU
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
+		return appErr.ErrInvalidInputWithCode("investment.operation.not_found", "investment operation not found", nil)
+	}
+	return nil
+}
+
+func (repo *repository) DeleteOperations(db *gorm.DB, userID uuid.UUID, operationIDs []uuid.UUID) error {
+	uniqueIDs := uniqueUUIDs(operationIDs)
+	if len(uniqueIDs) == 0 {
+		return nil
+	}
+	result := repo.useDB(db).Where("user_id = ? AND id IN ?", userID, uniqueIDs).Delete(&Operation{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != int64(len(uniqueIDs)) {
 		return appErr.ErrInvalidInputWithCode("investment.operation.not_found", "investment operation not found", nil)
 	}
 	return nil

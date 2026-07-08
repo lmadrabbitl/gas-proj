@@ -617,6 +617,52 @@ interface WatchedCategoryGroup {
           </div>
           <p class="field-hint">{{ messages.settings.watchedCategoriesHint }}</p>
           <label>
+            {{ messages.settings.sellGainCategoryLabel }}
+            <select
+              [ngModel]="pendingSellGainCategoryID() ?? ''"
+              (ngModelChange)="pendingSellGainCategoryID.set($event ? $event : null)"
+            >
+              <option value="">{{ messages.settings.sellGainCategoryPlaceholder }}</option>
+              @for (group of incomeLeafCategoryGroups(); track group.key) {
+                @if (group.label) {
+                  <optgroup [label]="group.label">
+                    @for (category of group.options; track category.ID) {
+                      <option [value]="category.ID">{{ category.Name }}</option>
+                    }
+                  </optgroup>
+                } @else {
+                  @for (category of group.options; track category.ID) {
+                    <option [value]="category.ID">{{ category.Name }}</option>
+                  }
+                }
+              }
+            </select>
+          </label>
+          <p class="field-hint">{{ messages.settings.sellGainCategoryHint }}</p>
+          <label>
+            {{ messages.settings.sellLossCategoryLabel }}
+            <select
+              [ngModel]="pendingSellLossCategoryID() ?? ''"
+              (ngModelChange)="pendingSellLossCategoryID.set($event ? $event : null)"
+            >
+              <option value="">{{ messages.settings.sellLossCategoryPlaceholder }}</option>
+              @for (group of expenseLeafCategoryGroups(); track group.key) {
+                @if (group.label) {
+                  <optgroup [label]="group.label">
+                    @for (category of group.options; track category.ID) {
+                      <option [value]="category.ID">{{ category.Name }}</option>
+                    }
+                  </optgroup>
+                } @else {
+                  @for (category of group.options; track category.ID) {
+                    <option [value]="category.ID">{{ category.Name }}</option>
+                  }
+                }
+              }
+            </select>
+          </label>
+          <p class="field-hint">{{ messages.settings.sellLossCategoryHint }}</p>
+          <label>
             {{ messages.settings.strategyLabel }}
             <select [ngModel]="pendingSuggestionStrategy()" (ngModelChange)="pendingSuggestionStrategy.set($event)">
               <option value="BEST_NEXT_SHARE">{{ messages.settings.strategyBestNextShare }}</option>
@@ -1005,6 +1051,8 @@ export class InvestmentPortfoliosComponent implements OnInit {
   readonly pendingRebalanceTolerance = signal('0,50');
   readonly pendingSuggestionStrategy = signal<InvestmentSuggestionStrategy>('BEST_NEXT_SHARE');
   readonly pendingWatchedCategoryIDs = signal<string[]>([]);
+  readonly pendingSellGainCategoryID = signal<string | null>(null);
+  readonly pendingSellLossCategoryID = signal<string | null>(null);
   readonly assetDrafts = signal<Record<string, PortfolioAssetDraft>>({});
   readonly assetSelections = signal<Record<string, boolean>>({});
   readonly assetSelectionOrder = signal<string[]>([]);
@@ -1096,6 +1144,7 @@ export class InvestmentPortfoliosComponent implements OnInit {
         this.resetPendingRebalanceTolerance();
         this.resetPendingSuggestionStrategy();
         this.resetPendingWatchedCategoryIDs();
+        this.resetPendingSellPnLCategories();
 
         const nextSelectedCode = preferredCode ?? this.selectedPortfolioCode();
         const selectedExists = nextSelectedCode ? portfolios.some((portfolio) => portfolio.code === nextSelectedCode) : false;
@@ -1171,6 +1220,7 @@ export class InvestmentPortfoliosComponent implements OnInit {
     this.resetPendingRebalanceTolerance();
     this.resetPendingSuggestionStrategy();
     this.resetPendingWatchedCategoryIDs();
+    this.resetPendingSellPnLCategories();
     this.closeWatchedCategoryMenu();
     this.settingsPanelOpen.set(true);
   }
@@ -1208,6 +1258,8 @@ export class InvestmentPortfoliosComponent implements OnInit {
           },
           integration: {
             watched_category_ids: this.pendingWatchedCategoryIDs(),
+            sell_gain_category_id: this.pendingSellGainCategoryID(),
+            sell_loss_category_id: this.pendingSellLossCategoryID(),
           },
         },
       },
@@ -1219,6 +1271,8 @@ export class InvestmentPortfoliosComponent implements OnInit {
         });
         this.userConfigService.syncInvestmentIntegrationConfig({
           watched_category_ids: this.pendingWatchedCategoryIDs(),
+          sell_gain_category_id: this.pendingSellGainCategoryID(),
+          sell_loss_category_id: this.pendingSellLossCategoryID(),
         });
         this.closeSettings();
         this.loadSelectedAnalysis(this.selectedPortfolioCode());
@@ -2066,10 +2120,67 @@ export class InvestmentPortfoliosComponent implements OnInit {
     this.pendingWatchedCategoryIDs.set([...this.userConfigService.investmentIntegrationConfig().watched_category_ids]);
   }
 
-  private watchedIncomeLeafCategories(): Category[] {
+  private resetPendingSellPnLCategories(): void {
+    const integration = this.userConfigService.investmentIntegrationConfig();
+    this.pendingSellGainCategoryID.set(integration.sell_gain_category_id ?? null);
+    this.pendingSellLossCategoryID.set(integration.sell_loss_category_id ?? null);
+  }
+
+  incomeLeafCategories(): Category[] {
     return this.referenceData
       .activeFlatCategories()
-      .filter((category) => category.Type === 'INCOME' && !(category.SubCategories?.length ?? 0));
+      .filter((category) => category.Type === 'INCOME' && !!category.ParentID && !(category.SubCategories?.length ?? 0));
+  }
+
+  incomeLeafCategoryGroups(): WatchedCategoryGroup[] {
+    return this.categoryLeafGroupsByType('INCOME');
+  }
+
+  expenseLeafCategories(): Category[] {
+    return this.referenceData
+      .activeFlatCategories()
+      .filter((category) => category.Type === 'EXPENSE' && !!category.ParentID && !(category.SubCategories?.length ?? 0));
+  }
+
+  expenseLeafCategoryGroups(): WatchedCategoryGroup[] {
+    return this.categoryLeafGroupsByType('EXPENSE');
+  }
+
+  private watchedIncomeLeafCategories(): Category[] {
+    return this.incomeLeafCategories();
+  }
+
+  private categoryLeafGroupsByType(type: 'INCOME' | 'EXPENSE'): WatchedCategoryGroup[] {
+    const groups: WatchedCategoryGroup[] = [];
+
+    for (const category of this.referenceData.activeCategories()) {
+      if (category.Type !== type) {
+        continue;
+      }
+
+      const subCategories = category.SubCategories ?? [];
+      if (subCategories.length > 0) {
+        const selectableChildren = subCategories.filter((child) => child.Type === type && !!child.ParentID && !(child.SubCategories?.length ?? 0));
+        if (selectableChildren.length > 0) {
+          groups.push({
+            key: category.Code,
+            label: category.Name,
+            options: selectableChildren,
+          });
+        }
+        continue;
+      }
+
+      if (category.ParentID && !(category.SubCategories?.length ?? 0)) {
+        groups.push({
+          key: category.Code,
+          label: null,
+          options: [category],
+        });
+      }
+    }
+
+    return groups;
   }
 
   private closeWatchedCategoryMenu(): void {

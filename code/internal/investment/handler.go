@@ -90,26 +90,34 @@ type ImportOperationInput struct {
 }
 
 type ImportMirroredTransactionDraftInput struct {
-	ClientRowID            string `json:"client_row_id" binding:"required"`
-	SourceAccountCode      string `json:"source_account_code" binding:"required"`
-	DestinationAccountCode string `json:"destination_account_code" binding:"required"`
+	ClientRowID              string     `json:"client_row_id" binding:"required"`
+	SourceAccountCode        string     `json:"source_account_code"`
+	DestinationAccountCode   string     `json:"destination_account_code"`
+	TransactionID            *uuid.UUID `json:"transaction_id"`
+	RealizedPNLTransactionID *uuid.UUID `json:"realized_pnl_transaction_id"`
 }
 
 type CreateOperationMirrorInput struct {
-	SourceAccountCode      string     `json:"source_account_code"`
-	DestinationAccountCode string     `json:"destination_account_code"`
-	TransactionID          *uuid.UUID `json:"transaction_id"`
+	SourceAccountCode        string     `json:"source_account_code"`
+	DestinationAccountCode   string     `json:"destination_account_code"`
+	TransactionID            *uuid.UUID `json:"transaction_id"`
+	RealizedPNLTransactionID *uuid.UUID `json:"realized_pnl_transaction_id"`
 }
 
 type CreateOperationMirrorsBulkInput struct {
 	Items []CreateOperationMirrorBulkItemInput `json:"items" binding:"required"`
 }
 
+type DeleteOperationsBulkInput struct {
+	OperationIDs []uuid.UUID `json:"operation_ids" binding:"required"`
+}
+
 type CreateOperationMirrorBulkItemInput struct {
-	OperationID            uuid.UUID  `json:"operation_id" binding:"required"`
-	SourceAccountCode      string     `json:"source_account_code"`
-	DestinationAccountCode string     `json:"destination_account_code"`
-	TransactionID          *uuid.UUID `json:"transaction_id"`
+	OperationID              uuid.UUID  `json:"operation_id" binding:"required"`
+	SourceAccountCode        string     `json:"source_account_code"`
+	DestinationAccountCode   string     `json:"destination_account_code"`
+	TransactionID            *uuid.UUID `json:"transaction_id"`
+	RealizedPNLTransactionID *uuid.UUID `json:"realized_pnl_transaction_id"`
 }
 
 type CreateBulkOperationInput struct {
@@ -157,10 +165,12 @@ func (h *Handler) RegisterRoutes(authMw *middleware.AuthMiddleware, r gin.IRoute
 	r.DELETE("/investments/portfolios/:code/assets/:assetCode", authMw.CheckAuthMiddleware(), h.DeletePortfolioAsset)
 	r.POST("/investments/operations", authMw.CheckAuthMiddleware(), h.CreateOperation)
 	r.POST("/investments/operations/bulk", authMw.CheckAuthMiddleware(), h.CreateOperationsBulk)
+	r.POST("/investments/import-operations/preview", authMw.CheckAuthMiddleware(), h.PreviewImportOperations)
 	r.POST("/investments/import-operations", authMw.CheckAuthMiddleware(), h.ImportOperations)
 	r.GET("/investments/operations", authMw.CheckAuthMiddleware(), h.ListOperations)
 	r.POST("/investments/operations/:id/mirror", authMw.CheckAuthMiddleware(), h.CreateOperationMirror)
 	r.POST("/investments/operations/mirror-bulk", authMw.CheckAuthMiddleware(), h.CreateOperationMirrorsBulk)
+	r.POST("/investments/operations/bulk-delete", authMw.CheckAuthMiddleware(), h.DeleteOperationsBulk)
 	r.PATCH("/investments/operations/:id", authMw.CheckAuthMiddleware(), h.UpdateOperation)
 	r.DELETE("/investments/operations/:id", authMw.CheckAuthMiddleware(), h.DeleteOperation)
 	r.GET("/investments/positions", authMw.CheckAuthMiddleware(), h.ListPositions)
@@ -260,6 +270,55 @@ func (h *Handler) RefreshMissingAssetMetadata(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"updated": updated})
+}
+
+func (h *Handler) PreviewImportOperations(c *gin.Context) {
+	var input ImportOperationsInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		appHttp.HandleError(c, err)
+		return
+	}
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		appHttp.HandleError(c, errors.ErrInvalidLoginPassword())
+		return
+	}
+
+	req := ImportOperationsRequest{
+		Operations:                 make([]ImportOperationRequest, 0, len(input.Operations)),
+		CreateMirroredTransactions: input.CreateMirroredTransactions,
+		MirroredTransactions:       make([]MirroredTransactionDraftRequest, 0, len(input.MirroredTransactions)),
+	}
+	for _, item := range input.Operations {
+		req.Operations = append(req.Operations, ImportOperationRequest{
+			ClientRowID:           item.ClientRowID,
+			AssetCode:             item.AssetCode,
+			BrokerageAccountCode:  item.BrokerageAccountCode,
+			InvestmentAccountCode: item.InvestmentAccountCode,
+			OperationType:         OperationType(strings.ToUpper(item.OperationType)),
+			Date:                  item.Date,
+			Quantity:              item.Quantity,
+			UnitPrice:             item.UnitPrice,
+			TotalFeeAmount:        item.TotalFeeAmount,
+			Notes:                 item.Notes,
+		})
+	}
+	for _, draft := range input.MirroredTransactions {
+		req.MirroredTransactions = append(req.MirroredTransactions, MirroredTransactionDraftRequest{
+			ClientRowID:              draft.ClientRowID,
+			SourceAccountCode:        draft.SourceAccountCode,
+			DestinationAccountCode:   draft.DestinationAccountCode,
+			TransactionID:            draft.TransactionID,
+			RealizedPNLTransactionID: draft.RealizedPNLTransactionID,
+		})
+	}
+
+	preview, err := h.service.PreviewImportOperations(userID, req)
+	if err != nil {
+		appHttp.HandleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"preview": preview})
 }
 
 func (h *Handler) CreatePortfolio(c *gin.Context) {
@@ -533,9 +592,11 @@ func (h *Handler) ImportOperations(c *gin.Context) {
 	}
 	for _, draft := range input.MirroredTransactions {
 		req.MirroredTransactions = append(req.MirroredTransactions, MirroredTransactionDraftRequest{
-			ClientRowID:            strings.TrimSpace(draft.ClientRowID),
-			SourceAccountCode:      strings.TrimSpace(draft.SourceAccountCode),
-			DestinationAccountCode: strings.TrimSpace(draft.DestinationAccountCode),
+			ClientRowID:              strings.TrimSpace(draft.ClientRowID),
+			SourceAccountCode:        strings.TrimSpace(draft.SourceAccountCode),
+			DestinationAccountCode:   strings.TrimSpace(draft.DestinationAccountCode),
+			TransactionID:            draft.TransactionID,
+			RealizedPNLTransactionID: draft.RealizedPNLTransactionID,
 		})
 	}
 
@@ -621,9 +682,10 @@ func (h *Handler) CreateOperationMirror(c *gin.Context) {
 	}
 
 	operation, err := h.service.CreateOperationMirror(userID, operationID, CreateOperationMirrorRequest{
-		SourceAccountCode:      input.SourceAccountCode,
-		DestinationAccountCode: input.DestinationAccountCode,
-		TransactionID:          input.TransactionID,
+		SourceAccountCode:        input.SourceAccountCode,
+		DestinationAccountCode:   input.DestinationAccountCode,
+		TransactionID:            input.TransactionID,
+		RealizedPNLTransactionID: input.RealizedPNLTransactionID,
 	})
 	if err != nil {
 		appHttp.HandleError(c, err)
@@ -646,10 +708,11 @@ func (h *Handler) CreateOperationMirrorsBulk(c *gin.Context) {
 	items := make([]CreateOperationMirrorBulkItemRequest, 0, len(input.Items))
 	for _, item := range input.Items {
 		items = append(items, CreateOperationMirrorBulkItemRequest{
-			OperationID:            item.OperationID,
-			SourceAccountCode:      item.SourceAccountCode,
-			DestinationAccountCode: item.DestinationAccountCode,
-			TransactionID:          item.TransactionID,
+			OperationID:              item.OperationID,
+			SourceAccountCode:        item.SourceAccountCode,
+			DestinationAccountCode:   item.DestinationAccountCode,
+			TransactionID:            item.TransactionID,
+			RealizedPNLTransactionID: item.RealizedPNLTransactionID,
 		})
 	}
 	operations, err := h.service.CreateOperationMirrorsBulk(userID, CreateOperationMirrorsBulkRequest{Items: items})
@@ -672,6 +735,26 @@ func (h *Handler) DeleteOperation(c *gin.Context) {
 		return
 	}
 	if err := h.service.DeleteOperation(userID, operationID); err != nil {
+		appHttp.HandleError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) DeleteOperationsBulk(c *gin.Context) {
+	var input DeleteOperationsBulkInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		appHttp.HandleError(c, err)
+		return
+	}
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		appHttp.HandleError(c, errors.ErrInvalidLoginPassword())
+		return
+	}
+	if err := h.service.DeleteOperationsBulk(userID, DeleteOperationsBulkRequest{
+		OperationIDs: input.OperationIDs,
+	}); err != nil {
 		appHttp.HandleError(c, err)
 		return
 	}

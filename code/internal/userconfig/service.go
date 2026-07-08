@@ -83,6 +83,8 @@ func (serv *service) UpdateConfig(userID uuid.UUID, req UpdateConfigRequest) (*C
 	}
 	if req.Settings != nil && req.Settings.Investments != nil && req.Settings.Investments.Integration != nil {
 		config.Settings.Investments.Integration.WatchedCategoryIDs = normalizeWatchedCategoryIDs(req.Settings.Investments.Integration.WatchedCategoryIDs)
+		config.Settings.Investments.Integration.SellGainCategoryID = normalizeOptionalUUID(req.Settings.Investments.Integration.SellGainCategoryID)
+		config.Settings.Investments.Integration.SellLossCategoryID = normalizeOptionalUUID(req.Settings.Investments.Integration.SellLossCategoryID)
 	}
 	if req.Settings != nil && req.Settings.UI != nil && req.Settings.UI.HideAmounts != nil {
 		config.Settings.UI.HideAmounts = *req.Settings.UI.HideAmounts
@@ -140,6 +142,8 @@ func defaultConfig() *Config {
 				},
 				Integration: InvestmentIntegrationConfig{
 					WatchedCategoryIDs: []uuid.UUID{},
+					SellGainCategoryID: nil,
+					SellLossCategoryID: nil,
 				},
 			},
 			UI: UIConfig{
@@ -173,6 +177,8 @@ func decodeConfig(row *UserConfig) (*Config, error) {
 	config.Settings.Investments.Portfolios.RebalanceToleranceBPS = clampRebalanceToleranceBPS(config.Settings.Investments.Portfolios.RebalanceToleranceBPS)
 	config.Settings.Investments.Portfolios.SuggestionStrategy = clampInvestmentSuggestionStrategy(config.Settings.Investments.Portfolios.SuggestionStrategy)
 	config.Settings.Investments.Integration.WatchedCategoryIDs = normalizeWatchedCategoryIDs(config.Settings.Investments.Integration.WatchedCategoryIDs)
+	config.Settings.Investments.Integration.SellGainCategoryID = normalizeOptionalUUID(config.Settings.Investments.Integration.SellGainCategoryID)
+	config.Settings.Investments.Integration.SellLossCategoryID = normalizeOptionalUUID(config.Settings.Investments.Integration.SellLossCategoryID)
 
 	return config, nil
 }
@@ -250,4 +256,12 @@ func normalizeWatchedCategoryIDs(ids []uuid.UUID) []uuid.UUID {
 		normalized = append(normalized, id)
 	}
 	return normalized
+}
+
+func normalizeOptionalUUID(id *uuid.UUID) *uuid.UUID {
+	if id == nil || *id == uuid.Nil {
+		return nil
+	}
+	copy := *id
+	return &copy
 }

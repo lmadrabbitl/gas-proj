@@ -411,12 +411,22 @@ func (repo *repository) baseQueryWithCodes(db *gorm.DB) *gorm.DB {
 			t.exclude_from_dashboard,
 			CASE WHEN iotl.transaction_id IS NOT NULL THEN TRUE ELSE FALSE END AS is_investment_operation_mirror,
 			iotl.investment_operation_id,
-			iotl.role AS investment_operation_link_role
+			iotl.role AS investment_operation_link_role,
+			COALESCE(iotl.investment_operation_count, 0) AS investment_operation_count
 		`).
 		Joins("JOIN accounts a ON a.id = t.account_id").
 		Joins("JOIN categories c ON c.id = t.category_id").
 		Joins("LEFT JOIN accounts a2 ON a2.id = t.transfer_account_id").
-		Joins("LEFT JOIN investment_operation_transaction_links iotl ON iotl.transaction_id = t.id AND iotl.user_id = t.user_id")
+		Joins(`LEFT JOIN (
+			SELECT
+				user_id,
+				transaction_id,
+				MIN(investment_operation_id::text)::uuid AS investment_operation_id,
+				MIN(role) AS role,
+				COUNT(DISTINCT investment_operation_id) AS investment_operation_count
+			FROM investment_operation_transaction_links
+			GROUP BY user_id, transaction_id
+		) iotl ON iotl.transaction_id = t.id AND iotl.user_id = t.user_id`)
 }
 
 func mapPGError(err error) error {

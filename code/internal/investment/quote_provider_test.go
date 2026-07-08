@@ -775,7 +775,9 @@ func (s transactionReaderStub) ListVisibleByCategoryIDs(userID uuid.UUID, catego
 }
 
 type serviceTestRepo struct {
+	createAssetFn           func(asset *Asset) (*Asset, error)
 	listAssetsFn            func(userID uuid.UUID) ([]Asset, error)
+	getAssetByCodeFn        func(userID uuid.UUID, code string) (*Asset, error)
 	getPortfolioByCodeFn    func(userID uuid.UUID, code string) (*Portfolio, error)
 	listPortfolioAssetsFn   func(userID uuid.UUID) ([]PortfolioAssetRow, error)
 	listPositionsFn         func(userID uuid.UUID) ([]PositionRow, error)
@@ -785,7 +787,12 @@ type serviceTestRepo struct {
 	upsertPositionFn        func(position *Position) error
 }
 
-func (r *serviceTestRepo) CreateAsset(asset *Asset) (*Asset, error) { panic("unexpected call") }
+func (r *serviceTestRepo) CreateAsset(asset *Asset) (*Asset, error) {
+	if r.createAssetFn != nil {
+		return r.createAssetFn(asset)
+	}
+	panic("unexpected call")
+}
 func (r *serviceTestRepo) ListAssets(userID uuid.UUID) ([]Asset, error) {
 	if r.listAssetsFn != nil {
 		return r.listAssetsFn(userID)
@@ -793,6 +800,9 @@ func (r *serviceTestRepo) ListAssets(userID uuid.UUID) ([]Asset, error) {
 	return []Asset{}, nil
 }
 func (r *serviceTestRepo) GetAssetByCode(userID uuid.UUID, code string) (*Asset, error) {
+	if r.getAssetByCodeFn != nil {
+		return r.getAssetByCodeFn(userID, code)
+	}
 	panic("unexpected call")
 }
 func (r *serviceTestRepo) UpdateAsset(userID uuid.UUID, code string, update *UpdateAsset) (*Asset, error) {
@@ -865,6 +875,9 @@ func (r *serviceTestRepo) UpdateOperation(db *gorm.DB, userID, operationID uuid.
 	panic("unexpected call")
 }
 func (r *serviceTestRepo) DeleteOperation(db *gorm.DB, userID, operationID uuid.UUID) error {
+	panic("unexpected call")
+}
+func (r *serviceTestRepo) DeleteOperations(db *gorm.DB, userID uuid.UUID, operationIDs []uuid.UUID) error {
 	panic("unexpected call")
 }
 func (r *serviceTestRepo) ListAssetOperations(db *gorm.DB, userID, assetID uuid.UUID) ([]Operation, error) {

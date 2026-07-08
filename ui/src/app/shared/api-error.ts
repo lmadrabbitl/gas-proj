@@ -33,3 +33,29 @@ export function getApiErrorMessage(error: unknown): string {
 
   return 'Erro inesperado.';
 }
+
+export function getApiErrorCode(error: unknown): string | null {
+  if (!(error instanceof HttpErrorResponse)) {
+    return null;
+  }
+
+  const body = error.error as ApiError | undefined;
+  if (typeof body?.error === 'string') {
+    return null;
+  }
+
+  return body?.error?.code ?? null;
+}
+
+export function getApiErrorDetails(error: unknown): Record<string, unknown> | null {
+  if (!(error instanceof HttpErrorResponse)) {
+    return null;
+  }
+
+  const body = error.error as ApiError | undefined;
+  if (typeof body?.error === 'string') {
+    return null;
+  }
+
+  return body?.error?.details ?? null;
+}

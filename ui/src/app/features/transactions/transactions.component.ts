@@ -2,7 +2,7 @@ import { Component, DestroyRef, ElementRef, HostListener, OnInit, computed, inje
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, ParamMap, Router } from '@angular/router';
-import { CopyCheck, LucideAngularModule, SquarePen } from 'lucide-angular';
+import { CopyCheck, Link2, LucideAngularModule, SquarePen, Trash2 } from 'lucide-angular';
 import { Observable, debounceTime } from 'rxjs';
 
 import { ReferenceDataService } from '../../data/reference-data.service';
@@ -241,10 +241,23 @@ const TRANSACTION_OPERATION_OPTIONS = [
               @for (tx of transactions(); track tx.id) {
                 <tr [class]="transactionRowClass(tx)" (click)="toggleTransactionSelection(tx.id)">
                   <td class="selection-cell">
+                    @if (isInvestmentMirror(tx)) {
+                      <span class="mirror-bookmark" aria-hidden="true">
+                        <lucide-icon [img]="mirrorRowIcon" [size]="10" [strokeWidth]="1.9" aria-hidden="true" />
+                      </span>
+                    }
+                    @if (isInvestmentMirror(tx)) {
+                      <span class="sr-only" [id]="'tx-mirror-checkbox-hint-' + tx.id">
+                        {{ messages.form.linkedMirrorCheckboxHint }}
+                      </span>
+                    }
                     <input
                       type="checkbox"
                       [checked]="isTransactionSelected(tx.id)"
-                      [attr.aria-label]="messages.actions.selectAria"
+                      [disabled]="isInvestmentMirror(tx)"
+                      [attr.aria-label]="transactionCheckboxLabel(tx)"
+                      [attr.aria-describedby]="isInvestmentMirror(tx) ? 'tx-mirror-checkbox-hint-' + tx.id : null"
+                      [title]="isInvestmentMirror(tx) ? messages.form.linkedMirrorCheckboxHint : null"
                       (click)="$event.stopPropagation()"
                       (change)="toggleTransactionSelection(tx.id)"
                     />
@@ -258,26 +271,15 @@ const TRANSACTION_OPERATION_OPTIONS = [
                   <td class="actions-cell">
                     @if (isInvestmentMirror(tx)) {
                       <span
-                        class="icon-action mirror-indicator"
-                        title="Transação vinculada a uma operação de investimento"
-                        aria-label="Transação vinculada a uma operação de investimento"
+                        class="mirror-indicator"
+                        [title]="mirrorIndicatorTitle(tx)"
+                        [attr.aria-label]="mirrorIndicatorTitle(tx)"
                       >
-                        <svg aria-hidden="true" viewBox="0 0 24 24">
-                          <path
-                            d="M10.5 13.5 8 16a3 3 0 1 1-4.24-4.24l3-3A3 3 0 0 1 11 8m2 8a3 3 0 0 0 4.24 0l3-3A3 3 0 1 0 16 8l-2.5 2.5m-3 3h3"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="1.8"
-                          />
-                        </svg>
+                        <lucide-icon [img]="mirrorRowIcon" [size]="18" [strokeWidth]="1.9" aria-hidden="true" />
                       </span>
                     }
-                    <button class="icon-action" type="button" [disabled]="isInvestmentMirror(tx)" [title]="deleteActionTitle(tx)" [attr.aria-label]="messages.actions.deleteAria" (click)="$event.stopPropagation(); delete(tx)">
-                      <svg aria-hidden="true" viewBox="0 0 24 24">
-                        <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-1 6h2v10H8V9Zm6 0h2v10h-2V9Zm-9 0h14l-1 12H6L5 9Z" />
-                      </svg>
+                    <button class="icon-action delete-action" type="button" [disabled]="isInvestmentMirror(tx)" [title]="deleteActionTitle(tx)" [attr.aria-label]="messages.actions.deleteAria" (click)="$event.stopPropagation(); delete(tx)">
+                      <lucide-icon [img]="deleteRowIcon" [size]="18" [strokeWidth]="1.9" aria-hidden="true" />
                     </button>
                   </td>
                 </tr>
@@ -524,6 +526,19 @@ const TRANSACTION_OPERATION_OPTIONS = [
       z-index: 20;
     }
 
+    .sr-only {
+      border: 0;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      height: 1px;
+      margin: -1px;
+      overflow: hidden;
+      padding: 0;
+      position: absolute;
+      width: 1px;
+      white-space: nowrap;
+    }
+
     .multi-select-menu::-webkit-scrollbar {
       width: 10px;
     }
@@ -604,6 +619,10 @@ const TRANSACTION_OPERATION_OPTIONS = [
       width: 52px;
     }
 
+    .selection-cell {
+      position: relative;
+    }
+
     .selection-cell input {
       width: auto;
       margin: 0;
@@ -614,13 +633,46 @@ const TRANSACTION_OPERATION_OPTIONS = [
       cursor: pointer;
     }
 
-    .mirrored-row td {
-      background: #e8eefb;
+    .mirror-bookmark {
+      color: #49639a;
+      left: 6px;
+      line-height: 0;
+      pointer-events: none;
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
     }
 
     .mirror-indicator {
-      color: #49639a;
+      align-items: center;
+      background: transparent;
+      color: #111111;
       cursor: default;
+      display: inline-flex;
+      fill: none;
+      justify-content: center;
+      line-height: 0;
+      min-height: 28px;
+      min-width: 28px;
+      padding: 0;
+    }
+
+    .mirror-indicator svg {
+      fill: none;
+      stroke: currentColor;
+    }
+
+    .delete-action svg {
+      fill: none;
+      height: 18px;
+      stroke: currentColor;
+      vertical-align: 0;
+      width: 18px;
+    }
+
+    .delete-action lucide-icon {
+      display: inline-flex;
+      transform: translateY(-1px);
     }
 
     .bulk-actions-bar {
@@ -728,6 +780,8 @@ export class TransactionsComponent implements OnInit {
   readonly commonMessages = uiMessages.common;
   readonly listChecksIcon = CopyCheck;
   readonly editSelectedIcon = SquarePen;
+  readonly mirrorRowIcon = Link2;
+  readonly deleteRowIcon = Trash2;
   readonly loading = signal(true);
   readonly saving = signal(false);
   readonly error = signal('');
@@ -759,7 +813,7 @@ export class TransactionsComponent implements OnInit {
   });
   readonly selectedCount = computed(() => this.selectedTransactions().length);
   readonly allCurrentPageSelected = computed(() =>
-    this.transactions().length > 0 && this.transactions().every((tx) => this.selectedTransactionIds().includes(tx.id)),
+    this.selectableTransactions().length > 0 && this.selectableTransactions().every((tx) => this.selectedTransactionIds().includes(tx.id)),
   );
   readonly editingMany = computed(() => this.editMode() === 'edit-multi');
   readonly editingSingle = computed(() => this.editMode() === 'edit-single');
@@ -909,13 +963,25 @@ export class TransactionsComponent implements OnInit {
   }
 
   openEdit(tx: Transaction): void {
+    if (this.isInvestmentMirror(tx)) {
+      this.toast.error(this.messages.actions.editBlockedMirror);
+      return;
+    }
     this.selectedTransactionIds.set([tx.id]);
     this.openSelectedEdit();
+  }
+
+  private selectableTransactions(): Transaction[] {
+    return this.transactions().filter((tx) => !this.isInvestmentMirror(tx));
   }
 
   openSelectedEdit(): void {
     const selected = this.selectedTransactions();
     if (selected.length === 0) {
+      return;
+    }
+    if (selected.some((tx) => this.isInvestmentMirror(tx))) {
+      this.toast.error(this.messages.actions.editBlockedMirror);
       return;
     }
     this.settingsPanelOpen.set(false);
@@ -1101,6 +1167,10 @@ export class TransactionsComponent implements OnInit {
   }
 
   toggleTransactionSelection(id: string): void {
+    const transaction = this.transactions().find((item) => item.id === id);
+    if (transaction && this.isInvestmentMirror(transaction)) {
+      return;
+    }
     this.selectedTransactionIds.update((selected) =>
       selected.includes(id)
         ? selected.filter((current) => current !== id)
@@ -1206,6 +1276,21 @@ export class TransactionsComponent implements OnInit {
 
   isInvestmentMirror(tx: Transaction): boolean {
     return Boolean(tx.is_investment_operation_mirror);
+  }
+
+  transactionCheckboxLabel(tx: Transaction): string {
+    if (this.isInvestmentMirror(tx)) {
+      return `${this.messages.actions.selectAria}. ${this.messages.form.linkedMirrorCheckboxHint}`;
+    }
+    return this.messages.actions.selectAria;
+  }
+
+  mirrorIndicatorTitle(tx: Transaction): string {
+    const linkedCount = tx.investment_operation_count ?? 0;
+    if (linkedCount > 1) {
+      return `Transação vinculada a ${linkedCount} operações de investimento`;
+    }
+    return 'Transação vinculada a uma operação de investimento';
   }
 
   transactionRowClass(tx: Transaction): string {
@@ -1721,18 +1806,20 @@ export class TransactionsComponent implements OnInit {
   private syncMirrorFieldState(): void {
     const editingMirror = this.isEditingInvestmentMirror();
     const linkedBulkSelection = this.isEditingLinkedMirrorSelection();
-    const protectedControls: Array<'date' | 'description' | 'amount' | 'category_code' | 'is_transfer' | 'exclude_from_dashboard'> = [
+    const protectedControls: Array<'date' | 'description' | 'amount' | 'category_code' | 'is_transfer' | 'exclude_from_dashboard' | 'account_code' | 'account_transfer'> = [
       'date',
       'description',
       'amount',
       'category_code',
       'is_transfer',
       'exclude_from_dashboard',
+      'account_code',
+      'account_transfer',
     ];
 
     for (const controlName of protectedControls) {
       const control = this.form.controls[controlName];
-      if (editingMirror || (linkedBulkSelection && controlName !== 'date' && controlName !== 'description' && controlName !== 'amount')) {
+      if (editingMirror || linkedBulkSelection) {
         control.disable({ emitEvent: false });
       } else if (controlName === 'date' || controlName === 'description' || controlName === 'amount') {
         if (this.editMode() !== 'edit-multi') {
@@ -1741,11 +1828,6 @@ export class TransactionsComponent implements OnInit {
       } else {
         control.enable({ emitEvent: false });
       }
-    }
-
-    if (editingMirror || linkedBulkSelection) {
-      this.form.controls.account_code.enable({ emitEvent: false });
-      this.form.controls.account_transfer.enable({ emitEvent: false });
     }
   }
 
@@ -1763,7 +1845,7 @@ export class TransactionsComponent implements OnInit {
       this.clearSelection();
       return;
     }
-    this.selectedTransactionIds.set(this.transactions().map((tx) => tx.id));
+    this.selectedTransactionIds.set(this.selectableTransactions().map((tx) => tx.id));
   }
 
   private clearSelection(): void {

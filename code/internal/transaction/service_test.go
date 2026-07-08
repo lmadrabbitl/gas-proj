@@ -12,16 +12,16 @@ import (
 )
 
 type transactionRepoStub struct {
-	createSingleFn            func(db *gorm.DB, userID uuid.UUID, transaction *Transaction) (*TransactionResponseItem, error)
-	getByIDFn                 func(db *gorm.DB, userID, transactionID uuid.UUID) (*Transaction, error)
-	getByIDsFn                func(db *gorm.DB, userID uuid.UUID, transactionIDs []uuid.UUID) ([]*Transaction, error)
-	getDTOByIDFn              func(db *gorm.DB, userID, transactionID uuid.UUID) (*TransactionResponseItem, error)
-	getByTransferIDFn         func(db *gorm.DB, userID uuid.UUID, transferID int64) ([]Transaction, error)
-	getByUserFn               func(db *gorm.DB, userID uuid.UUID, filter *FilterTransactionQuery, showAll bool) (*TransactionResponse, error)
-	updateFn                  func(db *gorm.DB, userID, transactionID uuid.UUID, transaction *UpdateTransaction) (*TransactionResponseItem, error)
-	deleteFn                  func(db *gorm.DB, userID, transactionID uuid.UUID) error
-	getNextTransferIDFn       func(db *gorm.DB) (int64, error)
-	calculateAccountBalanceFn func(db *gorm.DB, userID uuid.UUID, accCode string) (int64, error)
+	createSingleFn             func(db *gorm.DB, userID uuid.UUID, transaction *Transaction) (*TransactionResponseItem, error)
+	getByIDFn                  func(db *gorm.DB, userID, transactionID uuid.UUID) (*Transaction, error)
+	getByIDsFn                 func(db *gorm.DB, userID uuid.UUID, transactionIDs []uuid.UUID) ([]*Transaction, error)
+	getDTOByIDFn               func(db *gorm.DB, userID, transactionID uuid.UUID) (*TransactionResponseItem, error)
+	getByTransferIDFn          func(db *gorm.DB, userID uuid.UUID, transferID int64) ([]Transaction, error)
+	getByUserFn                func(db *gorm.DB, userID uuid.UUID, filter *FilterTransactionQuery, showAll bool) (*TransactionResponse, error)
+	updateFn                   func(db *gorm.DB, userID, transactionID uuid.UUID, transaction *UpdateTransaction) (*TransactionResponseItem, error)
+	deleteFn                   func(db *gorm.DB, userID, transactionID uuid.UUID) error
+	getNextTransferIDFn        func(db *gorm.DB) (int64, error)
+	calculateAccountBalanceFn  func(db *gorm.DB, userID uuid.UUID, accCode string) (int64, error)
 	listVisibleByCategoryIDsFn func(userID uuid.UUID, categoryIDs []uuid.UUID) ([]TransactionCategoryMatchRow, error)
 }
 
@@ -578,5 +578,63 @@ func TestUpdateTransactionsBulkUpdatesUniqueAccountsOnce(t *testing.T) {
 	}
 	if balanceCalls != 1 {
 		t.Fatalf("expected 1 balance update, got %d", balanceCalls)
+	}
+}
+
+func TestEnsureMirrorTransactionUpdateAllowedRejectsAccountChanges(t *testing.T) {
+	userID := uuid.New()
+	transactionID := uuid.New()
+	accountCode := "brokerage"
+	transferAccountCode := "investment"
+
+	service := &transactionService{
+		repo: &transactionRepoStub{
+			getDTOByIDFn: func(db *gorm.DB, gotUserID, gotTransactionID uuid.UUID) (*TransactionResponseItem, error) {
+				if gotUserID != userID || gotTransactionID != transactionID {
+					t.Fatalf("unexpected args: %s %s", gotUserID, gotTransactionID)
+				}
+				return &TransactionResponseItem{
+					ID:                 transactionID,
+					IsInvestmentMirror: true,
+				}, nil
+			},
+		},
+	}
+
+	err := service.ensureMirrorTransactionUpdateAllowed(userID, transactionID, UpdateTransactionRequest{
+		AccountCode: &accountCode,
+	})
+	if err == nil {
+		t.Fatal("expected linked mirror account change to be rejected")
+	}
+
+	err = service.ensureMirrorTransactionUpdateAllowed(userID, transactionID, UpdateTransactionRequest{
+		TransferAccountCode: &transferAccountCode,
+	})
+	if err == nil {
+		t.Fatal("expected linked mirror transfer account change to be rejected")
+	}
+}
+
+func TestEnsureMirrorTransactionUpdateAllowedAllowsUnprotectedNoop(t *testing.T) {
+	userID := uuid.New()
+	transactionID := uuid.New()
+
+	service := &transactionService{
+		repo: &transactionRepoStub{
+			getDTOByIDFn: func(db *gorm.DB, gotUserID, gotTransactionID uuid.UUID) (*TransactionResponseItem, error) {
+				if gotUserID != userID || gotTransactionID != transactionID {
+					t.Fatalf("unexpected args: %s %s", gotUserID, gotTransactionID)
+				}
+				return &TransactionResponseItem{
+					ID:                 transactionID,
+					IsInvestmentMirror: true,
+				}, nil
+			},
+		},
+	}
+
+	if err := service.ensureMirrorTransactionUpdateAllowed(userID, transactionID, UpdateTransactionRequest{}); err != nil {
+		t.Fatalf("expected noop linked mirror update check to pass, got %v", err)
 	}
 }

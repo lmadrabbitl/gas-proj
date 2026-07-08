@@ -12,6 +12,7 @@ type AppError struct {
 	Code    string
 	Message string
 	Err     error
+	Details map[string]any
 }
 
 func (e *AppError) Error() string {
@@ -27,6 +28,11 @@ func (e *AppError) Unwrap() error {
 
 func (e *AppError) WithErr(err error) *AppError {
 	e.Err = err
+	return e
+}
+
+func (e *AppError) WithDetails(details map[string]any) *AppError {
+	e.Details = details
 	return e
 }
 

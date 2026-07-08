@@ -70,18 +70,19 @@ type TransactionResponse struct {
 }
 
 type TransactionResponseItem struct {
-	ID                    uuid.UUID  `json:"id" gorm:"column:id"`
-	CategoryCode          string     `json:"category_code" gorm:"column:category_code"`
-	Description           string     `json:"description" gorm:"column:description"`
-	Date                  time.Time  `json:"date" gorm:"column:date"`
-	AccountCode           string     `json:"account_code" gorm:"column:account_code"`
-	Amount                int64      `json:"amount" gorm:"column:amount"`
-	TransferID            *int64     `json:"transfer_id" gorm:"column:transfer_id"`
-	TransferAccountCode   *string    `json:"account_transfer" gorm:"column:transfer_account_code"`
-	ExcludeFromDashboard  bool       `json:"exclude_from_dashboard" gorm:"column:exclude_from_dashboard"`
-	IsInvestmentMirror    bool       `json:"is_investment_operation_mirror" gorm:"column:is_investment_operation_mirror"`
-	InvestmentOperationID *uuid.UUID `json:"investment_operation_id" gorm:"column:investment_operation_id"`
-	InvestmentLinkRole    *string    `json:"investment_operation_link_role" gorm:"column:investment_operation_link_role"`
+	ID                       uuid.UUID  `json:"id" gorm:"column:id"`
+	CategoryCode             string     `json:"category_code" gorm:"column:category_code"`
+	Description              string     `json:"description" gorm:"column:description"`
+	Date                     time.Time  `json:"date" gorm:"column:date"`
+	AccountCode              string     `json:"account_code" gorm:"column:account_code"`
+	Amount                   int64      `json:"amount" gorm:"column:amount"`
+	TransferID               *int64     `json:"transfer_id" gorm:"column:transfer_id"`
+	TransferAccountCode      *string    `json:"account_transfer" gorm:"column:transfer_account_code"`
+	ExcludeFromDashboard     bool       `json:"exclude_from_dashboard" gorm:"column:exclude_from_dashboard"`
+	IsInvestmentMirror       bool       `json:"is_investment_operation_mirror" gorm:"column:is_investment_operation_mirror"`
+	InvestmentOperationID    *uuid.UUID `json:"investment_operation_id" gorm:"column:investment_operation_id"`
+	InvestmentLinkRole       *string    `json:"investment_operation_link_role" gorm:"column:investment_operation_link_role"`
+	InvestmentOperationCount int        `json:"investment_operation_count" gorm:"column:investment_operation_count"`
 }
 
 type PaginationInfo struct {

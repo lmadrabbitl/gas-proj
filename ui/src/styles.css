@@ -1480,7 +1480,6 @@ input[readonly] {
 }
 
 .insert-preview-block {
-  border-top: 1px solid var(--border);
   background: var(--surface-tint-3);
   min-height: 220px;
 }

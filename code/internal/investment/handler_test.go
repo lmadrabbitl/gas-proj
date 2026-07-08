@@ -31,12 +31,14 @@ type serviceStub struct {
 	reorderAssetsFn      func(userID uuid.UUID, portfolioCode string, assetCodes []string) error
 	createOpFn           func(userID uuid.UUID, req CreateOperationRequest) (*OperationRow, error)
 	createBulkOpsFn      func(userID uuid.UUID, req CreateBulkOperationsRequest) ([]OperationRow, error)
+	previewImportOpsFn   func(userID uuid.UUID, req ImportOperationsRequest) (*PreviewImportOperationsResponse, error)
 	importOpsFn          func(userID uuid.UUID, req ImportOperationsRequest) (*ImportOperationsResponse, error)
 	listOpsFn            func(userID uuid.UUID) ([]OperationRow, error)
 	createMirrorFn       func(userID, operationID uuid.UUID, req CreateOperationMirrorRequest) (*OperationRow, error)
 	createMirrorsBulkFn  func(userID uuid.UUID, req CreateOperationMirrorsBulkRequest) ([]OperationRow, error)
 	updateOpFn           func(userID uuid.UUID, operationID uuid.UUID, req UpdateOperationRequest) (*OperationRow, error)
 	deleteOpFn           func(userID uuid.UUID, operationID uuid.UUID) error
+	deleteBulkOpsFn      func(userID uuid.UUID, req DeleteOperationsBulkRequest) error
 	listPositionsFn      func(userID uuid.UUID) ([]PositionRow, error)
 	listPositionQuotesFn func(userID uuid.UUID) ([]PositionQuoteRow, error)
 }
@@ -87,6 +89,9 @@ func (s *serviceStub) CreateOperation(userID uuid.UUID, req CreateOperationReque
 func (s *serviceStub) CreateOperationsBulk(userID uuid.UUID, req CreateBulkOperationsRequest) ([]OperationRow, error) {
 	return s.createBulkOpsFn(userID, req)
 }
+func (s *serviceStub) PreviewImportOperations(userID uuid.UUID, req ImportOperationsRequest) (*PreviewImportOperationsResponse, error) {
+	return s.previewImportOpsFn(userID, req)
+}
 func (s *serviceStub) ImportOperations(userID uuid.UUID, req ImportOperationsRequest) (*ImportOperationsResponse, error) {
 	return s.importOpsFn(userID, req)
 }
@@ -104,6 +109,9 @@ func (s *serviceStub) UpdateOperation(userID uuid.UUID, operationID uuid.UUID, r
 }
 func (s *serviceStub) DeleteOperation(userID uuid.UUID, operationID uuid.UUID) error {
 	return s.deleteOpFn(userID, operationID)
+}
+func (s *serviceStub) DeleteOperationsBulk(userID uuid.UUID, req DeleteOperationsBulkRequest) error {
+	return s.deleteBulkOpsFn(userID, req)
 }
 func (s *serviceStub) ListPositions(userID uuid.UUID) ([]PositionRow, error) {
 	return s.listPositionsFn(userID)
@@ -141,6 +149,137 @@ func TestCreateOperationForwardsPayload(t *testing.T) {
 	}
 	if got.AssetCode != "mxrf11" || got.BrokerageAccountCode != "btg-invest" || got.InvestmentAccountCode != "investimentos-b3" || got.OperationType != OperationTypeBuy || got.Quantity != 10 || got.UnitPrice != 1234 {
 		t.Fatalf("unexpected mapped request: %+v", got)
+	}
+}
+
+func TestPreviewImportOperationsForwardsPayload(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	userID := uuid.New()
+	var got ImportOperationsRequest
+	service := &serviceStub{
+		previewImportOpsFn: func(callUserID uuid.UUID, req ImportOperationsRequest) (*PreviewImportOperationsResponse, error) {
+			got = req
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			return &PreviewImportOperationsResponse{
+				PositionPreviewRows: []PositionPreviewRow{{AssetCode: "MXRF11", ProjectedQuantity: 12}},
+			}, nil
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("userID", userID)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/investments/import-operations/preview",
+		bytes.NewBufferString(`{"operations":[{"client_row_id":"row-1","asset_code":"mxrf11","brokerage_account_code":"btg-invest","investment_account_code":"investimentos-b3","operation_type":"buy","date":"2026-06-20T00:00:00Z","quantity":10,"unit_price":1234,"total_fee_amount":10,"notes":"teste"}]}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	NewHandler(service).PreviewImportOperations(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if len(got.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(got.Operations))
+	}
+	if got.Operations[0].ClientRowID != "row-1" || got.Operations[0].OperationType != OperationTypeBuy {
+		t.Fatalf("unexpected mapped request: %+v", got.Operations[0])
+	}
+	if !strings.Contains(w.Body.String(), `"position_preview_rows"`) {
+		t.Fatalf("expected preview payload, got %s", w.Body.String())
+	}
+}
+
+func TestPreviewImportOperationsReturnsErrorDetails(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	userID := uuid.New()
+	service := &serviceStub{
+		previewImportOpsFn: func(callUserID uuid.UUID, req ImportOperationsRequest) (*PreviewImportOperationsResponse, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			return nil, appErr.ErrInvalidInputWithCode(
+				"investment.operation.sell.exceeds.position",
+				"sell operation exceeds available quantity for asset history",
+				nil,
+			).WithDetails(map[string]any{
+				"client_row_id":      "row-2",
+				"asset_code":         "VALE3",
+				"attempted_quantity": int64(10),
+				"available_quantity": int64(4),
+			})
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("userID", userID)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/investments/import-operations/preview",
+		bytes.NewBufferString(`{"operations":[{"client_row_id":"row-2","asset_code":"vale3","brokerage_account_code":"btg-invest","investment_account_code":"investimentos-b3","operation_type":"sell","date":"2026-06-20T00:00:00Z","quantity":10,"unit_price":1234,"total_fee_amount":10,"notes":"teste"}]}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	NewHandler(service).PreviewImportOperations(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"client_row_id":"row-2"`) ||
+		!strings.Contains(w.Body.String(), `"asset_code":"VALE3"`) ||
+		!strings.Contains(w.Body.String(), `"attempted_quantity":10`) ||
+		!strings.Contains(w.Body.String(), `"available_quantity":4`) {
+		t.Fatalf("expected details payload, got %s", w.Body.String())
+	}
+}
+
+func TestDeleteOperationsBulkForwardsPayload(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	userID := uuid.New()
+	operationIDOne := uuid.New()
+	operationIDTwo := uuid.New()
+	var got DeleteOperationsBulkRequest
+	service := &serviceStub{
+		deleteBulkOpsFn: func(callUserID uuid.UUID, req DeleteOperationsBulkRequest) error {
+			got = req
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			return nil
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("userID", userID)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/investments/operations/bulk-delete",
+		bytes.NewBufferString(`{"operation_ids":["`+operationIDOne.String()+`","`+operationIDTwo.String()+`"]}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	NewHandler(service).DeleteOperationsBulk(c)
+
+	if c.Writer.Status() != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", c.Writer.Status())
+	}
+	if len(got.OperationIDs) != 2 {
+		t.Fatalf("expected 2 ids, got %d", len(got.OperationIDs))
+	}
+	if got.OperationIDs[0] != operationIDOne || got.OperationIDs[1] != operationIDTwo {
+		t.Fatalf("unexpected operation ids: %#v", got.OperationIDs)
 	}
 }
 
@@ -396,8 +535,8 @@ func TestSavePortfolioAssetAllowsZeroTargetAllocation(t *testing.T) {
 	NewHandler(service).SavePortfolioAsset(c)
 	c.Writer.WriteHeaderNow()
 
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d body=%s", w.Code, w.Body.String())
+	if c.Writer.Status() != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", c.Writer.Status(), w.Body.String())
 	}
 	if !called {
 		t.Fatal("expected service to be called")
@@ -432,8 +571,8 @@ func TestReorderPortfolioAssetsForwardsCodes(t *testing.T) {
 	NewHandler(service).ReorderPortfolioAssets(c)
 	c.Writer.WriteHeaderNow()
 
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d body=%s", w.Code, w.Body.String())
+	if c.Writer.Status() != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", c.Writer.Status(), w.Body.String())
 	}
 	if gotPortfolioCode != "dividendos" {
 		t.Fatalf("expected portfolio code dividendos, got %s", gotPortfolioCode)

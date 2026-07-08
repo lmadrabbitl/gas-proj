@@ -24,6 +24,7 @@ export interface ApiError {
     | {
         code?: string;
         error?: string;
+        details?: Record<string, unknown>;
       };
 }
 
@@ -50,6 +51,8 @@ export interface InvestmentsConfig {
 
 export interface InvestmentIntegrationConfig {
   watched_category_ids: string[];
+  sell_gain_category_id?: string | null;
+  sell_loss_category_id?: string | null;
 }
 
 export interface UIConfig {
@@ -128,6 +131,11 @@ export interface InvestmentOperation {
   asset_type: InvestmentAssetType;
   brokerage_account_code?: string | null;
   investment_account_code?: string | null;
+  cash_movement_group_key?: string;
+  cash_movement_group_size?: number;
+  cash_movement_group_gross_amount?: number;
+  cash_movement_group_net_amount?: number;
+  cash_movement_group_quantity?: number;
   has_linked_mirror?: boolean;
   operation_type: InvestmentOperationType;
   date: string;
@@ -155,6 +163,16 @@ export interface InvestmentPosition {
   current_price?: number | null;
   quote_updated_at?: string | null;
   last_recalculated: string;
+}
+
+export interface InvestmentPositionPreviewRow {
+  asset_code: string;
+  asset_name: string;
+  current_quantity: number;
+  draft_change: number;
+  projected_quantity: number;
+  current_average_price: number;
+  projected_average_price: number;
 }
 
 export interface InvestmentPositionQuote {
@@ -269,6 +287,7 @@ export interface Transaction {
   is_investment_operation_mirror?: boolean;
   investment_operation_id?: string | null;
   investment_operation_link_role?: string | null;
+  investment_operation_count?: number;
 }
 
 export interface Pagination {
@@ -414,6 +433,8 @@ export interface ImportInvestmentOperationsPayload {
     client_row_id: string;
     source_account_code: string;
     destination_account_code: string;
+    transaction_id?: string | null;
+    realized_pnl_transaction_id?: string | null;
   }>;
 }
 
@@ -421,6 +442,10 @@ export interface ImportInvestmentOperationsResponse {
   operations: InvestmentOperation[];
   mirroring_enabled: boolean;
   mirrored_transactions_created: number;
+}
+
+export interface PreviewImportInvestmentOperationsResponse {
+  position_preview_rows: InvestmentPositionPreviewRow[];
 }
 
 export interface UpdateInvestmentOperationPayload {
@@ -439,6 +464,7 @@ export interface CreateInvestmentOperationMirrorPayload {
   source_account_code?: string;
   destination_account_code?: string;
   transaction_id?: string | null;
+  realized_pnl_transaction_id?: string | null;
 }
 
 export interface CreateInvestmentOperationMirrorsBulkPayload {
@@ -447,7 +473,12 @@ export interface CreateInvestmentOperationMirrorsBulkPayload {
     source_account_code?: string;
     destination_account_code?: string;
     transaction_id?: string | null;
+    realized_pnl_transaction_id?: string | null;
   }>;
+}
+
+export interface DeleteInvestmentOperationsBulkPayload {
+  operation_ids: string[];
 }
 
 export interface TransactionPayload {

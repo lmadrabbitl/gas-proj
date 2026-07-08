@@ -2,37 +2,65 @@ import { Component, DestroyRef, ElementRef, HostListener, OnInit, computed, inje
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { CopyCheck, Link2, LucideAngularModule, Trash2 } from 'lucide-angular';
 import { forkJoin, of, switchMap } from 'rxjs';
 
 import { InvestmentsService } from '../../data/investments.service';
 import { ReferenceDataService } from '../../data/reference-data.service';
 import { TransactionsService } from '../../data/transactions.service';
+import { UserConfigService } from '../../data/user-config.service';
 import { getApiErrorMessage } from '../../shared/api-error';
 import { investmentAssetLabel, investmentAssetTypeLabel, investmentOperationTypeLabel } from '../../shared/labels';
 import { uiMessages } from '../../shared/messages';
 import { MoneyVisibilityService } from '../../shared/money-visibility.service';
-import { brazilianDateToQuery, centsToDecimal, dateInputToIso, decimalToCents, toBrazilianDate, toDateInputValue } from '../../shared/money';
+import { brazilianDateToQuery, centsToCurrency, centsToDecimal, dateInputToIso, decimalToCents, toBrazilianDate, toDateInputValue } from '../../shared/money';
 import { Account, InvestmentAsset, InvestmentAssetType, InvestmentOperation, InvestmentOperationType, Transaction } from '../../shared/models';
 import { ToastService } from '../../shared/toast.service';
 
 type OperationsFilterMenuType = 'asset' | 'operation';
 type MirrorMode = 'create' | 'attach';
-type MirrorCandidate = { id: string; amount: number; label: string };
+type MirrorStatusFilter = 'any' | 'linked' | 'unlinked';
+type MirrorCandidate = {
+  id: string;
+  amount: number;
+  label: string;
+  date: string;
+  accountCode: string;
+  transferAccountCode: string;
+};
 type MirrorDraftRow = {
   operationId: string;
+  cashMovementGroupKey: string;
+  groupSize: number;
   assetCode: string;
   operationType: InvestmentOperationType;
+  brokerageAccountCode: string;
+  investmentAccountCode: string;
   quantity: number;
   date: string;
   netAmount: number;
+  realizedPnlAmount: number;
   sourceAccountCode: string;
   destinationAccountCode: string;
   transactionId: string;
+  attachRealizedPnl: boolean;
+  realizedPnlTransactionId: string;
 };
+type MirrorCandidateGroup = { label: string; items: MirrorCandidate[] };
+
+const MIRROR_OPTION_LABEL_MAX_CHARS = 67;
+const MIRROR_OPTION_DATE_CHARS = 8;
+const MIRROR_OPTION_SEPARATOR = ' · ';
+const MIRROR_OPTION_AMOUNT_MAX_CHARS = 12;
+const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
+  MIRROR_OPTION_LABEL_MAX_CHARS
+  - MIRROR_OPTION_DATE_CHARS
+  - (MIRROR_OPTION_SEPARATOR.length * 2)
+  - MIRROR_OPTION_AMOUNT_MAX_CHARS;
 
 @Component({
   selector: 'app-investment-operations',
-  imports: [FormsModule, ReactiveFormsModule, RouterLink, RouterLinkActive],
+  imports: [FormsModule, ReactiveFormsModule, RouterLink, RouterLinkActive, LucideAngularModule],
   template: `
     <section class="page-header">
       <div>
@@ -51,6 +79,13 @@ type MirrorDraftRow = {
       </a>
       <a routerLink="/investments/portfolios" routerLinkActive="active">{{ nav.portfolios }}</a>
     </nav>
+
+    @if (!sellAutomationConfigured()) {
+      <section class="panel page-warning">
+        <strong>{{ messages.sellAutomationWarning.title }}</strong>
+        <p>{{ messages.sellAutomationWarning.body }}</p>
+      </section>
+    }
 
     <section class="panel">
       <form class="filters operations-filters" [formGroup]="filters">
@@ -101,6 +136,14 @@ type MirrorDraftRow = {
           </div>
         </div>
         <label>
+          {{ messages.filters.mirrorStatus }}
+          <select formControlName="mirror_status">
+            <option value="any">{{ messages.filters.anyMirrorStatus }}</option>
+            <option value="linked">{{ messages.filters.linkedOnly }}</option>
+            <option value="unlinked">{{ messages.filters.unlinkedOnly }}</option>
+          </select>
+        </label>
+        <label>
           {{ messages.filters.from }}
           <input type="text" inputmode="numeric" [placeholder]="messages.filters.datePlaceholder" formControlName="from_date" />
         </label>
@@ -122,22 +165,41 @@ type MirrorDraftRow = {
         @if (selectedCount() > 0 && !panelOpen() && !mirrorModalOpen()) {
           <div class="operations-bulk-bar">
             <div class="operations-bulk-left">
-              <button class="ghost-button bulk-icon-button" type="button" (click)="toggleSelectAllFiltered()">
-                {{ allFilteredSelected() ? 'Limpar' : 'Tudo' }}
+              <button
+                class="ghost-button bulk-icon-button"
+                type="button"
+                [title]="selectAllLabel()"
+                [attr.aria-label]="selectAllLabel()"
+                (click)="toggleSelectAllFiltered()"
+              >
+                @if (allFilteredSelected()) {
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="M5 5h14v14H5z" fill="none" stroke="currentColor" stroke-width="1.8"></path>
+                    <path d="M8 8l8 8M16 8l-8 8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                  </svg>
+                } @else {
+                  <lucide-icon [img]="selectAllIcon" [size]="18" [strokeWidth]="1.9" aria-hidden="true" />
+                }
               </button>
               <span class="bulk-actions-count">{{ selectedCountLabel() }}</span>
             </div>
-            <button class="primary-button bulk-icon-button operations-link-button" type="button" (click)="openMirrorSelection()">
-              <svg aria-hidden="true" viewBox="0 0 24 24">
-                <path
-                  d="M10.5 13.5 8 16a3 3 0 1 1-4.24-4.24l3-3A3 3 0 0 1 11 8m2 8a3 3 0 0 0 4.24 0l3-3A3 3 0 1 0 16 8l-2.5 2.5m-3 3h3"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-              </svg>
+            <button
+              class="ghost-button bulk-icon-button operations-delete-button"
+              type="button"
+              [title]="messages.actions.removeSelected"
+              [attr.aria-label]="messages.actions.removeSelected"
+              (click)="removeSelected()"
+            >
+              <lucide-icon [img]="deleteIcon" [size]="18" [strokeWidth]="1.9" aria-hidden="true" />
+            </button>
+            <button
+              class="primary-button bulk-icon-button operations-link-button"
+              type="button"
+              [title]="messages.actions.mirror"
+              [attr.aria-label]="messages.actions.mirror"
+              (click)="openMirrorSelection()"
+            >
+              <lucide-icon [img]="mirrorIcon" [size]="18" [strokeWidth]="1.9" aria-hidden="true" />
             </button>
           </div>
         }
@@ -218,8 +280,8 @@ type MirrorDraftRow = {
                       <button
                         class="icon-action"
                         type="button"
-                        [disabled]="operation.has_linked_mirror || operation.operation_type === 'BONIFICATION'"
-                        [title]="operation.has_linked_mirror ? messages.actions.mirrorLinked : messages.actions.mirror"
+                        [disabled]="!isMirrorableOperation(operation)"
+                        [title]="mirrorActionTitle(operation)"
                         [attr.aria-label]="messages.actions.mirror"
                         (click)="$event.stopPropagation(); openMirror(operation)"
                       >
@@ -375,7 +437,7 @@ type MirrorDraftRow = {
                     <th>Ticker</th>
                     <th>Operação</th>
                     <th>Quantidade</th>
-                    <th>Valor</th>
+                    <th>{{ messages.mirror.summary }}</th>
                     <th>{{ messages.mirror.source }}</th>
                     <th>{{ messages.mirror.destination }}</th>
                   </tr>
@@ -384,9 +446,13 @@ type MirrorDraftRow = {
                   @for (row of mirrorRows(); track row.operationId; let index = $index) {
                     <tr>
                       <td>{{ row.assetCode }}</td>
-                      <td>{{ row.operationType === 'BUY' ? 'Compra' : row.operationType === 'SELL' ? 'Venda' : row.operationType }}</td>
+                      <td>{{ mirrorOperationLabel(row) }}</td>
                       <td>{{ row.quantity }}</td>
-                      <td>{{ money(row.netAmount) }}</td>
+                      <td class="mirror-summary-cell">
+                        @for (line of mirrorSummaryLines(row); track line) {
+                          <div>{{ line }}</div>
+                        }
+                      </td>
                       <td>
                         <select [ngModel]="row.sourceAccountCode" (ngModelChange)="updateMirrorSource(index, $any($event))">
                           <option value=""></option>
@@ -410,30 +476,69 @@ type MirrorDraftRow = {
             </div>
           } @else {
             <div class="mirror-table-wrap">
-              <table class="mirror-table">
+              <table class="mirror-table mirror-table-attach">
                 <thead>
                   <tr>
                     <th>Ticker</th>
                     <th>Operação</th>
                     <th>Quantidade</th>
-                    <th>Valor</th>
+                    <th>{{ messages.mirror.summary }}</th>
                     <th>{{ messages.mirror.existingTransaction }}</th>
+                    <th>{{ messages.mirror.realizedPnl }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   @for (row of mirrorRows(); track row.operationId; let index = $index) {
                     <tr>
                       <td>{{ row.assetCode }}</td>
-                      <td>{{ row.operationType === 'BUY' ? 'Compra' : row.operationType === 'SELL' ? 'Venda' : row.operationType }}</td>
+                      <td>{{ mirrorOperationLabel(row) }}</td>
                       <td>{{ row.quantity }}</td>
-                      <td>{{ money(row.netAmount) }}</td>
-                      <td>
+                      <td class="mirror-summary-cell">
+                        @for (line of mirrorSummaryLines(row); track line) {
+                          <div>{{ line }}</div>
+                        }
+                      </td>
+                      <td class="mirror-transaction-cell">
                         <select [ngModel]="row.transactionId" (ngModelChange)="updateMirrorTransaction(index, $any($event))">
                           <option value=""></option>
-                          @for (candidate of mirrorCandidates(); track candidate.id) {
-                            <option [value]="candidate.id">{{ candidate.label }}</option>
+                          @for (group of mirrorCandidateGroups(row); track group.label) {
+                            <optgroup [label]="group.label">
+                              @for (candidate of group.items; track $index) {
+                                <option [value]="candidate.id">{{ candidate.label }}</option>
+                              }
+                            </optgroup>
                           }
                         </select>
+                        @if (mirrorBrokerageHint(row); as hint) {
+                          <div class="mirror-inline-hint">{{ hint }}</div>
+                        }
+                      </td>
+                      <td class="mirror-pnl-cell">
+                        @if (row.operationType === 'SELL') {
+                          <label class="checkbox-label mirror-checkbox">
+                            <input
+                              type="checkbox"
+                              [ngModel]="row.attachRealizedPnl"
+                              (ngModelChange)="toggleMirrorRealizedPnl(index, $any($event))"
+                            />
+                            <span>{{ messages.mirror.attachRealizedPnl }}</span>
+                          </label>
+                          @if (row.attachRealizedPnl) {
+                            <select [ngModel]="row.realizedPnlTransactionId" (ngModelChange)="updateMirrorRealizedPnlTransaction(index, $any($event))">
+                              <option value=""></option>
+                              @for (group of mirrorPnlCandidateGroups(row); track group.label) {
+                                <optgroup [label]="group.label">
+                                  @for (candidate of group.items; track candidate.id) {
+                                    <option [value]="candidate.id">{{ candidate.label }}</option>
+                                  }
+                                </optgroup>
+                              }
+                            </select>
+                          }
+                          <div class="mirror-inline-hint">{{ messages.mirror.sellAttachHint }}</div>
+                        } @else {
+                          <span class="mirror-inline-hint">{{ messages.mirror.notApplicable }}</span>
+                        }
                       </td>
                     </tr>
                   }
@@ -472,6 +577,17 @@ type MirrorDraftRow = {
     .page-subtitle {
       margin: 6px 0 0;
       color: var(--muted);
+    }
+
+    .page-warning {
+      border-color: color-mix(in srgb, var(--warning, #b7791f) 35%, var(--border));
+      display: grid;
+      gap: 6px;
+    }
+
+    .page-warning p {
+      color: var(--muted);
+      margin: 0;
     }
 
     .operations-filters {
@@ -726,16 +842,19 @@ type MirrorDraftRow = {
       padding: 0 12px;
     }
 
+    .bulk-icon-button svg {
+      height: 18px;
+      width: 18px;
+    }
+
     .operations-link-button {
       width: 40px;
       padding: 0;
     }
 
-    .operations-link-button svg {
-      fill: none;
-      height: 18px;
-      stroke: currentColor;
-      width: 18px;
+    .operations-delete-button {
+      width: 40px;
+      padding: 0;
     }
 
     .modal-backdrop {
@@ -793,12 +912,34 @@ type MirrorDraftRow = {
       vertical-align: middle;
     }
 
+    .mirror-summary-cell {
+      white-space: normal;
+    }
+
+    .mirror-summary-cell div + div {
+      margin-top: 4px;
+    }
+
     .mirror-table select {
       font-size: 0.88rem;
       min-height: 38px;
       min-width: 0;
       padding: 8px 10px;
       width: 100%;
+    }
+
+    .mirror-table-attach {
+      table-layout: auto;
+    }
+
+    .mirror-table-attach .mirror-transaction-cell {
+      min-width: 340px;
+      width: 36%;
+    }
+
+    .mirror-table-attach .mirror-pnl-cell {
+      min-width: 280px;
+      width: 28%;
     }
 
     .mirror-table th:nth-child(1),
@@ -819,8 +960,8 @@ type MirrorDraftRow = {
 
     .mirror-table th:nth-child(4),
     .mirror-table td:nth-child(4) {
-      width: 120px;
-      text-align: right;
+      width: 210px;
+      text-align: left;
     }
 
     @media (max-width: 900px) {
@@ -855,6 +996,7 @@ export class InvestmentOperationsComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   private readonly elementRef = inject(ElementRef<HTMLElement>);
   private readonly moneyVisibility = inject(MoneyVisibilityService);
+  private readonly userConfigService = inject(UserConfigService);
   readonly nav = uiMessages.investments.nav;
   readonly messages = uiMessages.investments.operations;
   readonly loading = signal(true);
@@ -871,12 +1013,20 @@ export class InvestmentOperationsComponent implements OnInit {
   readonly activeAccounts = signal<Account[]>([]);
   readonly brokerageAccounts = signal<Account[]>([]);
   readonly investmentAccounts = signal<Account[]>([]);
+  readonly sellAutomationConfigured = computed(() => {
+    const integration = this.userConfigService.investmentIntegrationConfig();
+    return !!integration.sell_gain_category_id && !!integration.sell_loss_category_id;
+  });
   readonly mirrorCandidates = signal<MirrorCandidate[]>([]);
+  readonly mirrorPnlCandidates = signal<MirrorCandidate[]>([]);
   readonly mirrorMode = signal<MirrorMode>('create');
   readonly mirrorRows = signal<MirrorDraftRow[]>([]);
   readonly editing = signal<InvestmentOperation | null>(null);
   readonly activeAssets = computed(() => this.assets().filter((asset) => asset.is_active));
   readonly operationFilterOptions: InvestmentOperationType[] = ['BUY', 'SELL', 'BONIFICATION'];
+  readonly selectAllIcon = CopyCheck;
+  readonly mirrorIcon = Link2;
+  readonly deleteIcon = Trash2;
   readonly assetFilterOptions = computed(() => {
     const codes = new Set(this.operations().map((operation) => operation.asset_code));
     return Array.from(codes).sort((left, right) => left.localeCompare(right));
@@ -884,6 +1034,7 @@ export class InvestmentOperationsComponent implements OnInit {
   readonly filtersValue = signal({
     asset_codes: [] as string[],
     operation_types: [] as InvestmentOperationType[],
+    mirror_status: 'any' as MirrorStatusFilter,
     from_date: '',
     to_date: '',
   });
@@ -891,6 +1042,7 @@ export class InvestmentOperationsComponent implements OnInit {
     const filters = this.filtersValue();
     const assetCodes = new Set(filters.asset_codes);
     const operationTypes = new Set(filters.operation_types);
+    const mirrorStatus = filters.mirror_status;
     const fromDate = brazilianDateToQuery(filters.from_date);
     const toDate = brazilianDateToQuery(filters.to_date);
 
@@ -902,6 +1054,12 @@ export class InvestmentOperationsComponent implements OnInit {
       if (operationTypes.size > 0 && !operationTypes.has(operation.operation_type)) {
         return false;
       }
+      if (mirrorStatus === 'linked' && !operation.has_linked_mirror) {
+        return false;
+      }
+      if (mirrorStatus === 'unlinked' && operation.has_linked_mirror) {
+        return false;
+      }
       if (fromDate && operationDate < fromDate) {
         return false;
       }
@@ -911,6 +1069,7 @@ export class InvestmentOperationsComponent implements OnInit {
       return true;
     });
   });
+  readonly mirrorTransferAmountByGroup = computed(() => buildOperationMirrorTransferAmountByGroup(this.operations()));
   readonly selectedOperations = computed(() => {
     const selectedIds = new Set(this.selectedOperationIds());
     return this.filteredOperations().filter((operation) => selectedIds.has(operation.id));
@@ -923,6 +1082,7 @@ export class InvestmentOperationsComponent implements OnInit {
   readonly filters = this.fb.nonNullable.group({
     asset_codes: this.fb.nonNullable.control<string[]>([]),
     operation_types: this.fb.nonNullable.control<InvestmentOperationType[]>([]),
+    mirror_status: this.fb.nonNullable.control<MirrorStatusFilter>('any'),
     from_date: [''],
     to_date: [''],
   });
@@ -953,6 +1113,7 @@ export class InvestmentOperationsComponent implements OnInit {
         this.filtersValue.set({
           asset_codes: value.asset_codes ?? [],
           operation_types: value.operation_types ?? [],
+          mirror_status: value.mirror_status ?? 'any',
           from_date: value.from_date ?? '',
           to_date: value.to_date ?? '',
         });
@@ -1134,8 +1295,34 @@ export class InvestmentOperationsComponent implements OnInit {
     });
   }
 
+  removeSelected(): void {
+    const selected = this.selectedOperations();
+    if (selected.length === 0) {
+      return;
+    }
+    const message = selected.length === 1
+      ? `Excluir a operação ${selected[0].asset_code} de ${selected[0].quantity} unidade(s)?`
+      : `Excluir ${selected.length} operações selecionadas?`;
+    if (!window.confirm(message)) {
+      return;
+    }
+    this.investmentsService.deleteOperationsBulk({
+      operation_ids: selected.map((operation) => operation.id),
+    }).subscribe({
+      next: () => {
+        this.toast.success(selected.length === 1 ? 'Operação excluída.' : 'Operações excluídas.');
+        this.selectedOperationIds.set([]);
+        this.load();
+      },
+      error: (error) => this.toast.error(getApiErrorMessage(error)),
+    });
+  }
+
   openMirror(operation: InvestmentOperation): void {
-    if (operation.has_linked_mirror || operation.operation_type === 'BONIFICATION') {
+    if (!this.isMirrorableOperation(operation)) {
+      if (operation.operation_type === 'SELL' && !this.sellAutomationConfigured()) {
+        this.toast.error(this.messages.mirror.sellConfigRequired);
+      }
       return;
     }
     this.openMirrorForOperations([operation]);
@@ -1146,43 +1333,92 @@ export class InvestmentOperationsComponent implements OnInit {
     if (selected.length === 0) {
       return;
     }
-    const eligible = selected.filter((operation) => !operation.has_linked_mirror && operation.operation_type !== 'BONIFICATION');
+    const eligible = selected.filter((operation) => this.isMirrorableOperation(operation));
+    const selectionIssues = this.mirrorSelectionIssues(selected);
     if (eligible.length === 0) {
-      this.toast.error('Selecione pelo menos uma operação ainda não vinculada e que não seja bonificação.');
+      this.toast.error(selectionIssues[0] ?? 'Selecione pelo menos uma operação ainda não vinculada e que não seja bonificação.');
       return;
     }
-    if (eligible.length !== selected.length) {
-      this.toast.error('Algumas operações selecionadas já estão vinculadas ou são bonificações e não entrarão neste vínculo em lote.');
+    if (selectionIssues.length > 0) {
+      this.toast.error(selectionIssues.join(' '));
     }
     this.openMirrorForOperations(eligible);
   }
 
   private openMirrorForOperations(operations: InvestmentOperation[]): void {
+    const groupedOperations = this.groupOperationsForMirroring(operations);
     this.mirrorMode.set('create');
-    this.mirrorRows.set(operations.map((operation) => ({
+    this.mirrorRows.set(groupedOperations.map((operation) => ({
       operationId: operation.id,
+      cashMovementGroupKey: operation.cash_movement_group_key ?? operation.id,
+      groupSize: operation.cash_movement_group_size ?? 1,
       assetCode: operation.asset_code,
       operationType: operation.operation_type,
-      quantity: operation.quantity,
+      brokerageAccountCode: operation.brokerage_account_code ?? '',
+      investmentAccountCode: operation.investment_account_code ?? '',
+      quantity: operation.cash_movement_group_quantity ?? operation.quantity,
       date: operation.date,
-      netAmount: Math.abs(operation.net_amount),
-      sourceAccountCode: '',
-      destinationAccountCode: '',
+      netAmount: this.mirrorTransferAmountByGroup().get(operation.cash_movement_group_key ?? operation.id)
+        ?? Math.abs(operation.cash_movement_group_net_amount ?? operation.net_amount),
+      realizedPnlAmount: operation.operation_type === 'SELL'
+        ? (operation.cash_movement_group_net_amount ?? operation.net_amount)
+          - (this.mirrorTransferAmountByGroup().get(operation.cash_movement_group_key ?? operation.id)
+            ?? Math.abs(operation.cash_movement_group_net_amount ?? operation.net_amount))
+        : 0,
+      sourceAccountCode: operation.operation_type === 'SELL'
+        ? (operation.investment_account_code ?? '')
+        : (operation.brokerage_account_code ?? ''),
+      destinationAccountCode: operation.operation_type === 'SELL'
+        ? (operation.brokerage_account_code ?? '')
+        : (operation.investment_account_code ?? ''),
       transactionId: '',
+      attachRealizedPnl: false,
+      realizedPnlTransactionId: '',
     })));
     this.mirrorCandidates.set([]);
+    this.mirrorPnlCandidates.set([]);
     this.mirrorModalOpen.set(true);
 
-    this.transactionsService.list({ operation: 'transfer', limit: 1000 }).subscribe({
-      next: (response) => {
-        const candidates = (response.transactions ?? [])
-          .filter((tx) => Boolean(tx.transfer_id) && tx.account_transfer && !tx.is_investment_operation_mirror)
-          .map((tx) => ({
-            id: tx.id,
-            amount: Math.abs(tx.amount),
-            label: `${toBrazilianDate(tx.date)} · ${tx.description} · ${this.referenceData.accountName(tx.account_code)} -> ${this.referenceData.accountName(tx.account_transfer)} · ${this.money(tx.amount)}`,
-          }));
-        this.mirrorCandidates.set(candidates);
+    const brokerageAccountCodes = Array.from(
+      new Set(groupedOperations.map((operation) => (operation.brokerage_account_code ?? '').trim()).filter((code) => code.length > 0)),
+    );
+    forkJoin({
+      transfers: this.transactionsService.list({
+        operation: 'transfer',
+        account_code: brokerageAccountCodes,
+        limit: 1000,
+      }),
+      pnl: this.transactionsService.list({
+        operation: ['credit', 'debit'],
+        account_code: brokerageAccountCodes,
+        limit: 1000,
+      }),
+    }).subscribe({
+      next: ({ transfers, pnl }) => {
+        this.mirrorCandidates.set(
+          (transfers.transactions ?? [])
+            .filter((tx) => Boolean(tx.transfer_id) && tx.account_transfer && !tx.is_investment_operation_mirror)
+            .map((tx) => ({
+              id: tx.id,
+              amount: Math.abs(tx.amount),
+              date: tx.date,
+              accountCode: tx.account_code,
+              transferAccountCode: tx.account_transfer ?? '',
+              label: buildCompactMirrorOptionLabel(tx.date, tx.description, tx.amount),
+            })),
+        );
+        this.mirrorPnlCandidates.set(
+          (pnl.transactions ?? [])
+            .filter((tx) => !tx.transfer_id && !tx.is_investment_operation_mirror)
+            .map((tx) => ({
+              id: tx.id,
+              amount: tx.amount,
+              date: tx.date,
+              accountCode: tx.account_code,
+              transferAccountCode: '',
+              label: buildCompactMirrorOptionLabel(tx.date, tx.description, tx.amount),
+            })),
+        );
       },
       error: (error) => this.toast.error(getApiErrorMessage(error)),
     });
@@ -1194,6 +1430,7 @@ export class InvestmentOperationsComponent implements OnInit {
     }
     this.mirrorModalOpen.set(false);
     this.mirrorRows.set([]);
+    this.mirrorPnlCandidates.set([]);
   }
 
   canSubmitMirror(): boolean {
@@ -1201,7 +1438,10 @@ export class InvestmentOperationsComponent implements OnInit {
       return false;
     }
     if (this.mirrorMode() === 'attach') {
-      return this.mirrorRows().every((row) => row.transactionId.trim().length > 0);
+      return this.mirrorRows().every((row) =>
+        row.transactionId.trim().length > 0
+        && (row.operationType !== 'SELL' || !row.attachRealizedPnl || row.realizedPnlTransactionId.trim().length > 0),
+      );
     }
     return this.mirrorRows().every((row) =>
       row.sourceAccountCode.trim().length > 0
@@ -1241,6 +1481,7 @@ export class InvestmentOperationsComponent implements OnInit {
         ? {
             operation_id: row.operationId,
             transaction_id: row.transactionId,
+            realized_pnl_transaction_id: row.attachRealizedPnl ? row.realizedPnlTransactionId : null,
           }
         : {
             operation_id: row.operationId,
@@ -1305,6 +1546,10 @@ export class InvestmentOperationsComponent implements OnInit {
     return `${count} ${count === 1 ? 'operação selecionada' : 'operações selecionadas'}`;
   }
 
+  selectAllLabel(): string {
+    return this.allFilteredSelected() ? this.messages.actions.clearSelection : this.messages.actions.selectAll;
+  }
+
   updateMirrorSource(index: number, accountCode: string): void {
     const trimmed = `${accountCode ?? ''}`.trim();
     const shouldApplyToRemaining = index === 0 && this.mirrorRows()[0]?.sourceAccountCode.trim().length === 0 && trimmed.length > 0;
@@ -1337,6 +1582,21 @@ export class InvestmentOperationsComponent implements OnInit {
     const trimmed = `${transactionId ?? ''}`.trim();
     this.mirrorRows.update((rows) => rows.map((row, rowIndex) =>
       rowIndex === index ? { ...row, transactionId: trimmed } : row,
+    ));
+  }
+
+  toggleMirrorRealizedPnl(index: number, value: boolean): void {
+    this.mirrorRows.update((rows) => rows.map((row, rowIndex) =>
+      rowIndex === index
+        ? { ...row, attachRealizedPnl: Boolean(value), realizedPnlTransactionId: value ? row.realizedPnlTransactionId : '' }
+        : row,
+    ));
+  }
+
+  updateMirrorRealizedPnlTransaction(index: number, transactionId: string): void {
+    const trimmed = `${transactionId ?? ''}`.trim();
+    this.mirrorRows.update((rows) => rows.map((row, rowIndex) =>
+      rowIndex === index ? { ...row, realizedPnlTransactionId: trimmed } : row,
     ));
   }
 
@@ -1394,6 +1654,39 @@ export class InvestmentOperationsComponent implements OnInit {
     return this.referenceData.accountName(code) || '—';
   }
 
+  mirrorOperationLabel(row: MirrorDraftRow): string {
+    if (row.operationType === 'SELL') {
+      return row.groupSize > 1 ? `Venda agrupada (${row.groupSize})` : 'Venda';
+    }
+    if (row.operationType !== 'BUY') {
+      return row.operationType;
+    }
+    return row.groupSize > 1 ? `Compra agrupada (${row.groupSize})` : 'Compra';
+  }
+
+  isMirrorableOperation(operation: InvestmentOperation): boolean {
+    if (operation.has_linked_mirror) {
+      return false;
+    }
+    if (operation.operation_type === 'BUY') {
+      return true;
+    }
+    return operation.operation_type === 'SELL' && this.sellAutomationConfigured();
+  }
+
+  mirrorActionTitle(operation: InvestmentOperation): string {
+    if (operation.has_linked_mirror) {
+      return this.messages.actions.mirrorLinked;
+    }
+    if (operation.operation_type === 'SELL' && !this.sellAutomationConfigured()) {
+      return this.messages.actions.mirrorSellNeedsConfig;
+    }
+    if ((operation.cash_movement_group_size ?? 1) > 1) {
+      return this.messages.actions.mirrorGrouped;
+    }
+    return this.messages.actions.mirror;
+  }
+
   hasNotes(operation: InvestmentOperation): boolean {
     return operation.notes.trim().length > 0;
   }
@@ -1402,9 +1695,92 @@ export class InvestmentOperationsComponent implements OnInit {
     return this.hasNotes(operation) ? operation.notes : 'Sem observações';
   }
 
+  mirrorCandidateGroups(row: MirrorDraftRow): MirrorCandidateGroup[] {
+    const brokerageCode = row.brokerageAccountCode.trim().toLowerCase();
+    const filtered = this.mirrorCandidates().filter((candidate) =>
+      !brokerageCode
+      || candidate.accountCode.trim().toLowerCase() === brokerageCode
+      || candidate.transferAccountCode.trim().toLowerCase() === brokerageCode,
+    );
+    const allTransfers = [...filtered].sort((left, right) => right.date.localeCompare(left.date));
+    const nearbyTransfers = filtered
+      .filter((candidate) => daysBetweenIsoDates(candidate.date, row.date) <= 7)
+      .sort((left, right) => {
+        const leftDistance = daysBetweenIsoDates(left.date, row.date);
+        const rightDistance = daysBetweenIsoDates(right.date, row.date);
+        if (leftDistance === rightDistance) {
+          return right.date.localeCompare(left.date);
+        }
+        return leftDistance - rightDistance;
+      });
+
+    const groups: MirrorCandidateGroup[] = [];
+    if (nearbyTransfers.length > 0) {
+      groups.push({ label: 'Transferências perto da data', items: nearbyTransfers });
+    }
+    groups.push({ label: 'Todas as transferências', items: allTransfers });
+    return groups;
+  }
+
+  mirrorBrokerageHint(row: MirrorDraftRow): string {
+    if (!row.brokerageAccountCode) {
+      return '';
+    }
+    return `Filtrando pela conta corretora: ${this.brokerageAccountLabel(row.brokerageAccountCode)}`;
+  }
+
+  mirrorSummaryLines(row: MirrorDraftRow): string[] {
+    const lines = [`${this.messages.mirror.transferAmount}: ${this.money(row.netAmount)}`];
+    if (row.operationType === 'SELL') {
+      lines.push(`${this.messages.mirror.realizedPnlAmount}: ${this.money(row.realizedPnlAmount)}`);
+      lines.push(`${this.messages.mirror.saleNetAmount}: ${this.money(row.netAmount + row.realizedPnlAmount)}`);
+    }
+    return lines;
+  }
+
+  mirrorPnlCandidateGroups(row: MirrorDraftRow): MirrorCandidateGroup[] {
+    const brokerageCode = row.brokerageAccountCode.trim().toLowerCase();
+    const expectsPositivePnl = row.realizedPnlAmount >= 0;
+    const filtered = this.mirrorPnlCandidates().filter((candidate) => {
+      if (brokerageCode && candidate.accountCode.trim().toLowerCase() !== brokerageCode) {
+        return false;
+      }
+      return expectsPositivePnl ? candidate.amount >= 0 : candidate.amount < 0;
+    });
+    const allCandidates = [...filtered].sort((left, right) => right.date.localeCompare(left.date));
+    const nearbyCandidates = filtered
+      .filter((candidate) => daysBetweenIsoDates(candidate.date, row.date) <= 7)
+      .sort((left, right) => {
+        const leftDistance = daysBetweenIsoDates(left.date, row.date);
+        const rightDistance = daysBetweenIsoDates(right.date, row.date);
+        if (leftDistance === rightDistance) {
+          return right.date.localeCompare(left.date);
+        }
+        return leftDistance - rightDistance;
+      });
+
+    const groups: MirrorCandidateGroup[] = [];
+    if (nearbyCandidates.length > 0) {
+      groups.push({ label: 'Resultados perto da data', items: nearbyCandidates });
+    }
+    groups.push({ label: 'Todos os resultados', items: allCandidates });
+    return groups;
+  }
+
   private closeFilterMenus(): void {
     this.assetMenuOpen.set(false);
     this.operationMenuOpen.set(false);
+  }
+
+  private groupOperationsForMirroring(operations: InvestmentOperation[]): InvestmentOperation[] {
+    const grouped = new Map<string, InvestmentOperation>();
+    for (const operation of operations) {
+      const key = operation.cash_movement_group_key ?? operation.id;
+      if (!grouped.has(key)) {
+        grouped.set(key, operation);
+      }
+    }
+    return Array.from(grouped.values());
   }
 
   private selectionLabel(values: string[], emptyLabel: string): string {
@@ -1415,6 +1791,20 @@ export class InvestmentOperationsComponent implements OnInit {
       return values[0];
     }
     return `${values.length} selecionados`;
+  }
+
+  private mirrorSelectionIssues(selected: InvestmentOperation[]): string[] {
+    const issues: string[] = [];
+    if (selected.some((operation) => operation.has_linked_mirror)) {
+      issues.push('Algumas operações selecionadas já estão vinculadas e serão ignoradas.');
+    }
+    if (selected.some((operation) => operation.operation_type === 'SELL' && !this.sellAutomationConfigured())) {
+      issues.push(this.messages.mirror.sellConfigRequired);
+    }
+    if (selected.some((operation) => operation.operation_type !== 'BUY' && operation.operation_type !== 'SELL')) {
+      issues.push('Bonificações e tipos não suportados não entram neste vínculo em lote.');
+    }
+    return issues;
   }
 
   private normalizeFilterDateControl(controlName: 'from_date' | 'to_date', value: string): void {
@@ -1462,4 +1852,98 @@ export class InvestmentOperationsComponent implements OnInit {
     this.form.controls.new_asset_code.updateValueAndValidity({ emitEvent: false });
     this.form.controls.new_asset_name.updateValueAndValidity({ emitEvent: false });
   }
+}
+
+function daysBetweenIsoDates(left: string, right: string): number {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return Math.abs(Math.round((leftTime - rightTime) / (24 * 60 * 60 * 1000)));
+}
+
+function buildOperationMirrorTransferAmountByGroup(operations: InvestmentOperation[]): Map<string, number> {
+  const result = new Map<string, number>();
+  const currentByAsset = new Map<string, { quantity: number; costBasis: number }>();
+  const ordered = [...operations].sort((left, right) => {
+    const leftDate = left.date.slice(0, 10);
+    const rightDate = right.date.slice(0, 10);
+    if (leftDate === rightDate) {
+      if (left.created_at === right.created_at) {
+        return left.id.localeCompare(right.id);
+      }
+      return left.created_at.localeCompare(right.created_at);
+    }
+    return leftDate.localeCompare(rightDate);
+  });
+
+  for (const operation of ordered) {
+    const state = currentByAsset.get(operation.asset_code) ?? { quantity: 0, costBasis: 0 };
+    const groupKey = operation.cash_movement_group_key ?? operation.id;
+
+    if (operation.operation_type === 'BUY' || operation.operation_type === 'BONIFICATION') {
+      state.quantity += operation.quantity;
+      state.costBasis += operation.net_amount;
+      currentByAsset.set(operation.asset_code, state);
+      if (operation.operation_type === 'BUY') {
+        result.set(groupKey, (result.get(groupKey) ?? 0) + Math.abs(operation.net_amount));
+      }
+      continue;
+    }
+
+    if (operation.operation_type === 'SELL') {
+      let transferAmount = 0;
+      if (state.quantity > 0) {
+        transferAmount = operation.quantity === state.quantity
+          ? state.costBasis
+          : divideRounded(state.costBasis * operation.quantity, state.quantity);
+        state.quantity -= operation.quantity;
+        state.costBasis -= transferAmount;
+        if (state.quantity <= 0) {
+          state.quantity = 0;
+          state.costBasis = 0;
+        }
+      }
+      currentByAsset.set(operation.asset_code, state);
+      result.set(groupKey, (result.get(groupKey) ?? 0) + Math.abs(transferAmount));
+    }
+  }
+
+  return result;
+}
+
+function buildCompactMirrorOptionLabel(date: string, description: string, amount: number): string {
+  const compactDescription = truncateMirrorOptionDescription(description, MIRROR_OPTION_DESCRIPTION_MAX_CHARS);
+  return `${toCompactMirrorOptionDate(date)}${MIRROR_OPTION_SEPARATOR}${compactDescription}${MIRROR_OPTION_SEPARATOR}${toCompactMirrorOptionAmount(amount)}`;
+}
+
+function truncateMirrorOptionDescription(description: string, maxChars: number): string {
+  const normalized = description.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  if (maxChars <= 3) {
+    return normalized.slice(0, maxChars);
+  }
+  return `${normalized.slice(0, maxChars - 3)}...`;
+}
+
+function toCompactMirrorOptionDate(value: string): string {
+  const isoDate = toDateInputValue(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
+    return value;
+  }
+  return `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}/${isoDate.slice(2, 4)}`;
+}
+
+function toCompactMirrorOptionAmount(amount: number): string {
+  return centsToCurrency(Math.abs(amount)).replace(/\u00a0/g, ' ');
+}
+
+function divideRounded(numerator: number, denominator: number): number {
+  if (!denominator) {
+    return 0;
+  }
+  return Math.round(numerator / denominator);
 }

@@ -9,6 +9,7 @@ import {
   CreateInvestmentOperationMirrorsBulkPayload,
   CreateInvestmentOperationPayload,
   CreateInvestmentPortfolioPayload,
+  DeleteInvestmentOperationsBulkPayload,
   ImportInvestmentOperationsPayload,
   ImportInvestmentOperationsResponse,
   InvestmentAsset,
@@ -18,6 +19,7 @@ import {
   InvestmentPortfolioSuggestion,
   InvestmentPosition,
   InvestmentPositionQuote,
+  PreviewImportInvestmentOperationsResponse,
   SaveInvestmentPortfolioAssetPayload,
   UpdateInvestmentAssetPayload,
   UpdateInvestmentOperationPayload,
@@ -128,6 +130,12 @@ export class InvestmentsService {
     return this.http.post<ImportInvestmentOperationsResponse>('/api/investments/import-operations', payload);
   }
 
+  previewImportOperations(payload: ImportInvestmentOperationsPayload) {
+    return this.http
+      .post<{ preview: PreviewImportInvestmentOperationsResponse }>('/api/investments/import-operations/preview', payload)
+      .pipe(map((res) => res.preview));
+  }
+
   updateOperation(id: string, payload: UpdateInvestmentOperationPayload) {
     return this.http
       .patch<{ operation: InvestmentOperation }>(`/api/investments/operations/${id}`, payload)
@@ -136,6 +144,10 @@ export class InvestmentsService {
 
   deleteOperation(id: string) {
     return this.http.delete<void>(`/api/investments/operations/${id}`);
+  }
+
+  deleteOperationsBulk(payload: DeleteInvestmentOperationsBulkPayload) {
+    return this.http.post<void>('/api/investments/operations/bulk-delete', payload);
   }
 
   createOperationMirror(id: string, payload: CreateInvestmentOperationMirrorPayload) {
