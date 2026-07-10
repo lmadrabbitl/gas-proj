@@ -14,7 +14,7 @@ import { investmentAssetLabel, investmentAssetTypeLabel, investmentOperationType
 import { uiMessages } from '../../shared/messages';
 import { MoneyVisibilityService } from '../../shared/money-visibility.service';
 import { brazilianDateToQuery, centsToCurrency, centsToDecimal, dateInputToIso, decimalToCents, toBrazilianDate, toDateInputValue } from '../../shared/money';
-import { Account, InvestmentAsset, InvestmentAssetType, InvestmentOperation, InvestmentOperationType, Transaction } from '../../shared/models';
+import { Account, InvestmentAsset, InvestmentAssetType, InvestmentMirrorExtraType, InvestmentOperation, InvestmentOperationType, Transaction } from '../../shared/models';
 import { ToastService } from '../../shared/toast.service';
 
 type OperationsFilterMenuType = 'asset' | 'operation';
@@ -27,6 +27,7 @@ type MirrorCandidate = {
   date: string;
   accountCode: string;
   transferAccountCode: string;
+  categoryCode?: string;
 };
 type MirrorDraftRow = {
   operationId: string;
@@ -38,13 +39,14 @@ type MirrorDraftRow = {
   investmentAccountCode: string;
   quantity: number;
   date: string;
-  netAmount: number;
-  realizedPnlAmount: number;
+  transferAmount: number;
+  extraAmount: number;
+  extraType: InvestmentMirrorExtraType;
   sourceAccountCode: string;
   destinationAccountCode: string;
   transactionId: string;
-  attachRealizedPnl: boolean;
-  realizedPnlTransactionId: string;
+  attachExtraTransaction: boolean;
+  extraTransactionId: string;
 };
 type MirrorCandidateGroup = { label: string; items: MirrorCandidate[] };
 
@@ -373,6 +375,7 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
               <option value="BUY">{{ operationType('BUY') }}</option>
               <option value="SELL">{{ operationType('SELL') }}</option>
               <option value="BONIFICATION">{{ operationType('BONIFICATION') }}</option>
+              <option value="AMORTIZATION">{{ operationType('AMORTIZATION') }}</option>
             </select>
           </label>
           <label>
@@ -457,7 +460,7 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                 </thead>
                 <tbody>
                   @for (row of mirrorRows(); track row.operationId; let index = $index) {
-                    <tr>
+                    <tr [class.mirror-row-buy]="row.operationType === 'BUY'" [class.mirror-row-sell]="row.operationType === 'SELL'" [class.mirror-row-bonification]="row.operationType === 'BONIFICATION'">
                       <td>{{ row.assetCode }}</td>
                       <td>{{ mirrorOperationLabel(row) }}</td>
                       <td>{{ row.quantity }}</td>
@@ -497,12 +500,12 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                     <th>Quantidade</th>
                     <th>{{ messages.mirror.summary }}</th>
                     <th>{{ messages.mirror.existingTransaction }}</th>
-                    <th>{{ messages.mirror.realizedPnl }}</th>
+                    <th>{{ messages.mirror.extraTransaction }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   @for (row of mirrorRows(); track row.operationId; let index = $index) {
-                    <tr>
+                    <tr [class.mirror-row-buy]="row.operationType === 'BUY'" [class.mirror-row-sell]="row.operationType === 'SELL'" [class.mirror-row-bonification]="row.operationType === 'BONIFICATION'">
                       <td>{{ row.assetCode }}</td>
                       <td>{{ mirrorOperationLabel(row) }}</td>
                       <td>{{ row.quantity }}</td>
@@ -526,18 +529,18 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                         }
                       </td>
                       <td class="mirror-pnl-cell">
-                        @if (row.operationType === 'SELL') {
+                        @if (row.extraType !== 'NONE') {
                           <label class="checkbox-label mirror-checkbox">
                             <input
                               type="checkbox"
-                              [ngModel]="row.attachRealizedPnl"
-                              (ngModelChange)="toggleMirrorRealizedPnl(index, $any($event))"
+                              [ngModel]="row.attachExtraTransaction"
+                              (ngModelChange)="toggleMirrorExtraTransaction(index, $any($event))"
                             />
-                            <span>{{ messages.mirror.attachRealizedPnl }}</span>
+                            <span>{{ row.extraType === 'BONIFICATION_INCOME' ? messages.mirror.attachBonificationIncome : messages.mirror.attachRealizedPnl }}</span>
                           </label>
-                          @if (row.attachRealizedPnl) {
-                            <select [ngModel]="row.realizedPnlTransactionId" (ngModelChange)="updateMirrorRealizedPnlTransaction(index, $any($event))">
-                              <option value="">Selecione um resultado</option>
+                          @if (row.attachExtraTransaction) {
+                            <select [ngModel]="row.extraTransactionId" (ngModelChange)="updateMirrorExtraTransaction(index, $any($event))">
+                              <option value="">{{ row.extraType === 'BONIFICATION_INCOME' ? 'Selecione uma receita' : 'Selecione um resultado' }}</option>
                               @for (group of mirrorPnlCandidateGroups(row); track group.label) {
                                 <option value="" disabled>{{ group.label }}</option>
                                 @for (candidate of group.items; track candidate.id) {
@@ -546,7 +549,7 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                               }
                             </select>
                           }
-                          <div class="mirror-inline-hint">{{ messages.mirror.sellAttachHint }}</div>
+                          <div class="mirror-inline-hint">{{ row.extraType === 'BONIFICATION_INCOME' ? messages.mirror.bonificationAttachHint : messages.mirror.sellAttachHint }}</div>
                         } @else {
                           <span class="mirror-inline-hint">{{ messages.mirror.notApplicable }}</span>
                         }
@@ -744,7 +747,7 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
       display: flex;
       gap: 10px;
       justify-content: flex-start;
-      padding: 8px 10px;
+      padding: 8px 5px 8px 5px;
       width: 100%;
     }
 
@@ -884,7 +887,7 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
       inset: auto 18px 18px auto;
       justify-content: space-between;
       max-width: min(420px, calc(100vw - 36px));
-      padding: 8px 10px;
+      padding: 8px 5px 8px 5px;
       position: fixed;
       z-index: 30;
     }
@@ -970,12 +973,24 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
 
     .mirror-table th {
       font-size: 0.78rem;
-      padding: 8px 10px;
+      padding: 8px 5px 8px 5px;
     }
 
     .mirror-table td {
-      padding: 8px 10px;
+      padding: 8px 5px 8px 5px;
       vertical-align: middle;
+    }
+
+    .mirror-table .mirror-row-buy td {
+      background: color-mix(in srgb, #6aa89c 14%, var(--surface));
+    }
+
+    .mirror-table .mirror-row-sell td {
+      background: color-mix(in srgb, #d6a56b 16%, var(--surface));
+    }
+
+    .mirror-table .mirror-row-bonification td {
+      background: color-mix(in srgb, #8aa0b8 14%, var(--surface));
     }
 
     .mirror-summary-cell {
@@ -990,7 +1005,7 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
       font-size: 0.88rem;
       min-height: 38px;
       min-width: 0;
-      padding: 8px 10px;
+      padding: 8px 5px 8px 5px;
       width: 100%;
     }
 
@@ -1083,13 +1098,17 @@ export class InvestmentOperationsComponent implements OnInit {
     const integration = this.userConfigService.investmentIntegrationConfig();
     return !!integration.sell_gain_category_id && !!integration.sell_loss_category_id;
   });
+  readonly bonificationAutomationConfigured = computed(() => {
+    const integration = this.userConfigService.investmentIntegrationConfig();
+    return !!integration.bonification_income_category_id;
+  });
   readonly mirrorCandidates = signal<MirrorCandidate[]>([]);
   readonly mirrorPnlCandidates = signal<MirrorCandidate[]>([]);
   readonly mirrorMode = signal<MirrorMode>('create');
   readonly mirrorRows = signal<MirrorDraftRow[]>([]);
   readonly editing = signal<InvestmentOperation | null>(null);
   readonly activeAssets = computed(() => this.assets().filter((asset) => asset.is_active));
-  readonly operationFilterOptions: InvestmentOperationType[] = ['BUY', 'SELL', 'BONIFICATION'];
+  readonly operationFilterOptions: InvestmentOperationType[] = ['BUY', 'SELL', 'BONIFICATION', 'AMORTIZATION'];
   readonly selectAllIcon = CopyCheck;
   readonly checkIcon = Check;
   readonly mirrorIcon = Link2;
@@ -1311,6 +1330,11 @@ export class InvestmentOperationsComponent implements OnInit {
       date: dateInputToIso(value.date),
       notes: value.notes,
     };
+    if (operationPayload.operation_type === 'AMORTIZATION' && operationPayload.fee_amount !== 0) {
+      this.toast.error(this.messages.validation.amortizationFeeMustBeZero);
+      this.saving.set(false);
+      return;
+    }
     const createAsset$ = this.assetCreateMode()
       ? this.investmentsService.createAsset({
           code: value.new_asset_code,
@@ -1425,22 +1449,29 @@ export class InvestmentOperationsComponent implements OnInit {
       investmentAccountCode: operation.investment_account_code ?? '',
       quantity: operation.cash_movement_group_quantity ?? operation.quantity,
       date: operation.date,
-      netAmount: this.mirrorTransferAmountByGroup().get(operation.cash_movement_group_key ?? operation.id)
+      transferAmount: this.mirrorTransferAmountByGroup().get(operation.cash_movement_group_key ?? operation.id)
         ?? Math.abs(operation.cash_movement_group_net_amount ?? operation.net_amount),
-      realizedPnlAmount: operation.operation_type === 'SELL'
+      extraAmount: operation.operation_type === 'SELL'
         ? (operation.cash_movement_group_net_amount ?? operation.net_amount)
           - (this.mirrorTransferAmountByGroup().get(operation.cash_movement_group_key ?? operation.id)
             ?? Math.abs(operation.cash_movement_group_net_amount ?? operation.net_amount))
-        : 0,
-      sourceAccountCode: operation.operation_type === 'SELL'
+        : operation.operation_type === 'BONIFICATION'
+          ? Math.abs(operation.cash_movement_group_net_amount ?? operation.net_amount)
+          : 0,
+      extraType: operation.operation_type === 'SELL'
+        ? 'REALIZED_PNL'
+        : operation.operation_type === 'BONIFICATION'
+          ? 'BONIFICATION_INCOME'
+          : 'NONE',
+      sourceAccountCode: operation.operation_type === 'SELL' || operation.operation_type === 'AMORTIZATION'
         ? (operation.investment_account_code ?? '')
         : (operation.brokerage_account_code ?? ''),
-      destinationAccountCode: operation.operation_type === 'SELL'
+      destinationAccountCode: operation.operation_type === 'SELL' || operation.operation_type === 'AMORTIZATION'
         ? (operation.brokerage_account_code ?? '')
         : (operation.investment_account_code ?? ''),
       transactionId: '',
-      attachRealizedPnl: false,
-      realizedPnlTransactionId: '',
+      attachExtraTransaction: false,
+      extraTransactionId: '',
     })));
     this.mirrorCandidates.set([]);
     this.mirrorPnlCandidates.set([]);
@@ -1483,6 +1514,7 @@ export class InvestmentOperationsComponent implements OnInit {
               date: tx.date,
               accountCode: tx.account_code,
               transferAccountCode: '',
+              categoryCode: tx.category_code,
               label: buildCompactMirrorOptionLabel(tx.date, tx.description, tx.amount),
             })),
         );
@@ -1507,7 +1539,7 @@ export class InvestmentOperationsComponent implements OnInit {
     if (this.mirrorMode() === 'attach') {
       return this.mirrorRows().every((row) =>
         row.transactionId.trim().length > 0
-        && (row.operationType !== 'SELL' || !row.attachRealizedPnl || row.realizedPnlTransactionId.trim().length > 0),
+        && (row.extraType === 'NONE' || !row.attachExtraTransaction || row.extraTransactionId.trim().length > 0),
       );
     }
     return this.mirrorRows().every((row) =>
@@ -1526,10 +1558,10 @@ export class InvestmentOperationsComponent implements OnInit {
       const mismatches = rows
         .map((row) => {
           const candidate = this.mirrorCandidates().find((item) => item.id === row.transactionId);
-          if (!candidate || candidate.amount === row.netAmount) {
+          if (!candidate || candidate.amount === row.transferAmount) {
             return null;
           }
-          return `${row.assetCode}: ${this.money(candidate.amount)} -> ${this.money(row.netAmount)}`;
+          return `${row.assetCode}: ${this.money(candidate.amount)} -> ${this.money(row.transferAmount)}`;
         })
         .filter((item): item is string => Boolean(item));
       if (mismatches.length > 0) {
@@ -1548,7 +1580,10 @@ export class InvestmentOperationsComponent implements OnInit {
         ? {
             operation_id: row.operationId,
             transaction_id: row.transactionId,
-            realized_pnl_transaction_id: row.attachRealizedPnl ? row.realizedPnlTransactionId : null,
+            realized_pnl_transaction_id:
+              row.extraType === 'REALIZED_PNL' && row.attachExtraTransaction ? row.extraTransactionId : null,
+            bonification_income_transaction_id:
+              row.extraType === 'BONIFICATION_INCOME' && row.attachExtraTransaction ? row.extraTransactionId : null,
           }
         : {
             operation_id: row.operationId,
@@ -1652,18 +1687,18 @@ export class InvestmentOperationsComponent implements OnInit {
     ));
   }
 
-  toggleMirrorRealizedPnl(index: number, value: boolean): void {
+  toggleMirrorExtraTransaction(index: number, value: boolean): void {
     this.mirrorRows.update((rows) => rows.map((row, rowIndex) =>
       rowIndex === index
-        ? { ...row, attachRealizedPnl: Boolean(value), realizedPnlTransactionId: value ? row.realizedPnlTransactionId : '' }
+        ? { ...row, attachExtraTransaction: Boolean(value), extraTransactionId: value ? row.extraTransactionId : '' }
         : row,
     ));
   }
 
-  updateMirrorRealizedPnlTransaction(index: number, transactionId: string): void {
+  updateMirrorExtraTransaction(index: number, transactionId: string): void {
     const trimmed = `${transactionId ?? ''}`.trim();
     this.mirrorRows.update((rows) => rows.map((row, rowIndex) =>
-      rowIndex === index ? { ...row, realizedPnlTransactionId: trimmed } : row,
+      rowIndex === index ? { ...row, extraTransactionId: trimmed } : row,
     ));
   }
 
@@ -1757,7 +1792,9 @@ export class InvestmentOperationsComponent implements OnInit {
       return row.groupSize > 1 ? `Venda agrupada (${row.groupSize})` : 'Venda';
     }
     if (row.operationType !== 'BUY') {
-      return row.operationType;
+      return row.operationType === 'AMORTIZATION'
+        ? (row.groupSize > 1 ? `Amortização agrupada (${row.groupSize})` : 'Amortização')
+        : row.operationType;
     }
     return row.groupSize > 1 ? `Compra agrupada (${row.groupSize})` : 'Compra';
   }
@@ -1769,7 +1806,16 @@ export class InvestmentOperationsComponent implements OnInit {
     if (operation.operation_type === 'BUY') {
       return true;
     }
-    return operation.operation_type === 'SELL' && this.sellAutomationConfigured();
+    if (operation.operation_type === 'SELL') {
+      return this.sellAutomationConfigured();
+    }
+    if (operation.operation_type === 'BONIFICATION') {
+      return this.bonificationAutomationConfigured();
+    }
+    if (operation.operation_type === 'AMORTIZATION') {
+      return true;
+    }
+    return false;
   }
 
   mirrorActionTitle(operation: InvestmentOperation): string {
@@ -1778,6 +1824,9 @@ export class InvestmentOperationsComponent implements OnInit {
     }
     if (operation.operation_type === 'SELL' && !this.sellAutomationConfigured()) {
       return this.messages.actions.mirrorSellNeedsConfig;
+    }
+    if (operation.operation_type === 'BONIFICATION' && !this.bonificationAutomationConfigured()) {
+      return this.messages.mirror.bonificationConfigRequired;
     }
     if ((operation.cash_movement_group_size ?? 1) > 1) {
       return this.messages.actions.mirrorGrouped;
@@ -1828,20 +1877,55 @@ export class InvestmentOperationsComponent implements OnInit {
   }
 
   mirrorSummaryLines(row: MirrorDraftRow): string[] {
-    const lines = [`${this.messages.mirror.transferAmount}: ${this.money(row.netAmount)}`];
-    if (row.operationType === 'SELL') {
-      lines.push(`${this.messages.mirror.realizedPnlAmount}: ${this.money(row.realizedPnlAmount)}`);
-      lines.push(`${this.messages.mirror.saleNetAmount}: ${this.money(row.netAmount + row.realizedPnlAmount)}`);
+    const lines = [`${this.messages.mirror.transferAmount}: ${this.money(row.transferAmount)}`];
+    if (row.extraType === 'REALIZED_PNL') {
+      lines.push(`${this.mirrorRealizedPnlLabel(row.extraAmount)}: ${this.money(Math.abs(row.extraAmount))}`);
+      lines.push(`${this.messages.mirror.saleNetAmount}: ${this.money(row.transferAmount + row.extraAmount)}`);
+    } else if (row.extraType === 'BONIFICATION_INCOME') {
+      lines.push(`${this.messages.mirror.bonificationIncomeAmount}: ${this.money(row.extraAmount)}`);
     }
     return lines;
   }
 
+  private mirrorRealizedPnlLabel(amount: number): string {
+    return amount < 0 ? 'Prejuízo' : 'Lucro';
+  }
+
+  private expectedMirrorExtraCategoryCode(row: MirrorDraftRow): string | null {
+    const integration = this.userConfigService.investmentIntegrationConfig();
+    if (row.extraType === 'BONIFICATION_INCOME') {
+      return this.categoryCodeById(integration.bonification_income_category_id ?? null);
+    }
+    if (row.extraType === 'REALIZED_PNL') {
+      return this.categoryCodeById(
+        row.extraAmount >= 0
+          ? (integration.sell_gain_category_id ?? null)
+          : (integration.sell_loss_category_id ?? null),
+      );
+    }
+    return null;
+  }
+
+  private categoryCodeById(categoryId: string | null): string | null {
+    if (!categoryId) {
+      return null;
+    }
+    return this.referenceData.flatCategories().find((category) => category.ID === categoryId)?.Code ?? null;
+  }
+
   mirrorPnlCandidateGroups(row: MirrorDraftRow): MirrorCandidateGroup[] {
     const brokerageCode = row.brokerageAccountCode.trim().toLowerCase();
-    const expectsPositivePnl = row.realizedPnlAmount >= 0;
+    const expectsPositivePnl = row.extraAmount >= 0;
+    const expectedCategoryCode = this.expectedMirrorExtraCategoryCode(row);
     const filtered = this.mirrorPnlCandidates().filter((candidate) => {
       if (brokerageCode && candidate.accountCode.trim().toLowerCase() !== brokerageCode) {
         return false;
+      }
+      if (expectedCategoryCode && candidate.categoryCode !== expectedCategoryCode) {
+        return false;
+      }
+      if (row.extraType === 'BONIFICATION_INCOME') {
+        return candidate.amount >= 0;
       }
       return expectsPositivePnl ? candidate.amount >= 0 : candidate.amount < 0;
     });
@@ -1858,10 +1942,12 @@ export class InvestmentOperationsComponent implements OnInit {
       });
 
     const groups: MirrorCandidateGroup[] = [];
+    const nearbyLabel = row.extraType === 'BONIFICATION_INCOME' ? 'Receitas perto da data' : 'Resultados perto da data';
+    const allLabel = row.extraType === 'BONIFICATION_INCOME' ? 'Todas as receitas' : 'Todos os resultados';
     if (nearbyCandidates.length > 0) {
-      groups.push({ label: 'Resultados perto da data', items: nearbyCandidates });
+      groups.push({ label: nearbyLabel, items: nearbyCandidates });
     }
-    groups.push({ label: 'Todos os resultados', items: allCandidates });
+    groups.push({ label: allLabel, items: allCandidates });
     return groups;
   }
 
@@ -1899,8 +1985,11 @@ export class InvestmentOperationsComponent implements OnInit {
     if (selected.some((operation) => operation.operation_type === 'SELL' && !this.sellAutomationConfigured())) {
       issues.push(this.messages.mirror.sellConfigRequired);
     }
-    if (selected.some((operation) => operation.operation_type !== 'BUY' && operation.operation_type !== 'SELL')) {
-      issues.push('Bonificações e tipos não suportados não entram neste vínculo em lote.');
+    if (selected.some((operation) => operation.operation_type === 'BONIFICATION' && !this.bonificationAutomationConfigured())) {
+      issues.push(this.messages.mirror.bonificationConfigRequired);
+    }
+    if (selected.some((operation) => operation.operation_type !== 'BUY' && operation.operation_type !== 'SELL' && operation.operation_type !== 'BONIFICATION' && operation.operation_type !== 'AMORTIZATION')) {
+      issues.push('Tipos não suportados não entram neste vínculo em lote.');
     }
     return issues;
   }
@@ -1909,10 +1998,13 @@ export class InvestmentOperationsComponent implements OnInit {
     if (selected.some((operation) => operation.operation_type === 'SELL' && !this.sellAutomationConfigured())) {
       return this.messages.mirror.sellConfigRequired;
     }
+    if (selected.some((operation) => operation.operation_type === 'BONIFICATION' && !this.bonificationAutomationConfigured())) {
+      return this.messages.mirror.bonificationConfigRequired;
+    }
     if (selected.some((operation) => operation.has_linked_mirror)) {
       return 'Selecione pelo menos uma operação ainda não vinculada para abrir o vínculo em lote.';
     }
-    return 'Selecione pelo menos uma operação ainda não vinculada e que não seja bonificação.';
+    return 'Selecione pelo menos uma operação ainda não vinculada.';
   }
 
   private normalizeFilterDateControl(controlName: 'from_date' | 'to_date', value: string): void {
@@ -1973,7 +2065,7 @@ function daysBetweenIsoDates(left: string, right: string): number {
 
 function buildOperationMirrorTransferAmountByGroup(operations: InvestmentOperation[]): Map<string, number> {
   const result = new Map<string, number>();
-  const currentByAsset = new Map<string, { quantity: number; costBasis: number }>();
+  const currentByAssetAccount = new Map<string, { quantity: number; costBasis: number }>();
   const ordered = [...operations].sort((left, right) => {
     const leftDate = left.date.slice(0, 10);
     const rightDate = right.date.slice(0, 10);
@@ -1987,22 +2079,29 @@ function buildOperationMirrorTransferAmountByGroup(operations: InvestmentOperati
   });
 
   for (const operation of ordered) {
-    const state = currentByAsset.get(operation.asset_code) ?? { quantity: 0, costBasis: 0 };
+    const accountKey = `${operation.asset_code}::${operation.investment_account_code ?? ''}`;
+    const state = currentByAssetAccount.get(accountKey) ?? { quantity: 0, costBasis: 0 };
     const groupKey = operation.cash_movement_group_key ?? operation.id;
 
     if (operation.operation_type === 'BUY' || operation.operation_type === 'BONIFICATION') {
       state.quantity += operation.quantity;
       state.costBasis += operation.net_amount;
-      currentByAsset.set(operation.asset_code, state);
+      currentByAssetAccount.set(accountKey, state);
       if (operation.operation_type === 'BUY') {
         result.set(groupKey, (result.get(groupKey) ?? 0) + Math.abs(operation.net_amount));
       }
       continue;
     }
 
-    if (operation.operation_type === 'SELL') {
+    if (operation.operation_type === 'SELL' || operation.operation_type === 'AMORTIZATION') {
       let transferAmount = 0;
-      if (state.quantity > 0) {
+      if (operation.operation_type === 'AMORTIZATION') {
+        transferAmount = Math.abs(operation.net_amount);
+        state.costBasis -= transferAmount;
+        if (state.costBasis <= 0) {
+          state.costBasis = 0;
+        }
+      } else if (state.quantity > 0) {
         transferAmount = operation.quantity === state.quantity
           ? state.costBasis
           : divideRounded(state.costBasis * operation.quantity, state.quantity);
@@ -2013,7 +2112,7 @@ function buildOperationMirrorTransferAmountByGroup(operations: InvestmentOperati
           state.costBasis = 0;
         }
       }
-      currentByAsset.set(operation.asset_code, state);
+      currentByAssetAccount.set(accountKey, state);
       result.set(groupKey, (result.get(groupKey) ?? 0) + Math.abs(transferAmount));
     }
   }
@@ -2038,7 +2137,11 @@ function truncateMirrorOptionDescription(description: string, maxChars: number):
 }
 
 function toCompactMirrorOptionDate(value: string): string {
-  const isoDate = toDateInputValue(value);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  const isoDate = date.toISOString().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
     return value;
   }

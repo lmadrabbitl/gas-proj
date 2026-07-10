@@ -11,8 +11,15 @@ import { UserConfigService } from '../../data/user-config.service';
 import { getApiErrorCode, getApiErrorDetails, getApiErrorMessage } from '../../shared/api-error';
 import { uiMessages } from '../../shared/messages';
 import { MoneyVisibilityService } from '../../shared/money-visibility.service';
-import { brazilianDateToQuery, centsToCurrency, centsToDecimal, dateInputToIso, decimalToCents, toBrazilianDate } from '../../shared/money';
-import { Account, ImportInvestmentOperationsPayload, InvestmentOperation, InvestmentOperationType, InvestmentPositionPreviewRow } from '../../shared/models';
+import { brazilianDateToQuery, centsToCurrency, centsToDecimal, dateInputToIso, decimalToCents } from '../../shared/money';
+import {
+  Account,
+  ImportInvestmentOperationsPayload,
+  InvestmentMirrorExtraType,
+  InvestmentMirrorPreviewRow,
+  InvestmentOperationType,
+  InvestmentPositionPreviewRow,
+} from '../../shared/models';
 import { ToastService } from '../../shared/toast.service';
 import { investmentAssetLabel } from '../../shared/labels';
 
@@ -43,13 +50,14 @@ interface MirroredDraftRow {
   investmentAccountCode: string;
   date: string;
   description: string;
-  netAmount: number;
-  realizedPnlAmount: number;
+  transferAmount: number;
+  extraAmount: number;
+  extraType: InvestmentMirrorExtraType;
   sourceAccountCode: string;
   destinationAccountCode: string;
   transactionId: string;
-  attachRealizedPnl: boolean;
-  realizedPnlTransactionId: string;
+  attachExtraTransaction: boolean;
+  extraTransactionId: string;
 }
 
 type MirrorMode = 'create' | 'attach';
@@ -60,6 +68,7 @@ type MirrorCandidate = {
   date: string;
   accountCode: string;
   transferAccountCode: string;
+  categoryCode?: string;
 };
 type MirrorCandidateGroup = { label: string; items: MirrorCandidate[] };
 type PreviewRequest = {
@@ -70,6 +79,7 @@ type PreviewRequest = {
 };
 type PreviewResult = {
   position_preview_rows: InvestmentPositionPreviewRow[];
+  mirror_preview_rows?: InvestmentMirrorPreviewRow[];
   clear: boolean;
   blocked: boolean;
   rowErrors?: Record<number, string[]>;
@@ -197,6 +207,7 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                       <option value="BUY">{{ messages.types.buy }}</option>
                       <option value="SELL">{{ messages.types.sell }}</option>
                       <option value="BONIFICATION">{{ messages.types.bonification }}</option>
+                      <option value="AMORTIZATION">{{ messages.types.amortization }}</option>
                     </select>
                   </td>
                   <td>
@@ -371,14 +382,14 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                     <th>{{ messages.mirror.destination }}</th>
                   } @else {
                     <th>{{ messages.mirror.existingTransaction }}</th>
-                    <th>{{ messages.mirror.realizedPnl }}</th>
+                    <th>{{ messages.mirror.extraTransaction }}</th>
                   }
                 </tr>
               </thead>
               <tbody>
                 @for (row of mirrorRows(); track row.clientRowId) {
-                  <tr>
-                    <td>{{ row.date }}</td>
+                  <tr [class.mirror-row-buy]="row.operationType === 'BUY'" [class.mirror-row-sell]="row.operationType === 'SELL'" [class.mirror-row-bonification]="row.operationType === 'BONIFICATION'">
+                    <td>{{ mirrorDisplayDate(row.date) }}</td>
                     <td>{{ row.description }}</td>
                     <td class="mirror-summary-cell">
                       @for (line of mirrorSummaryLines(row); track line) {
@@ -434,22 +445,22 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                         }
                       </td>
                       <td class="mirror-pnl-cell">
-                        @if (row.operationType === 'SELL') {
+                        @if (row.extraType !== 'NONE') {
                           <label class="checkbox-label mirror-checkbox">
                             <input
                               type="checkbox"
-                              [ngModel]="row.attachRealizedPnl"
+                              [ngModel]="row.attachExtraTransaction"
                               name="mirror-pnl-toggle-{{ row.clientRowId }}"
-                              (ngModelChange)="toggleMirrorRealizedPnl(row, $event)"
+                              (ngModelChange)="toggleMirrorExtraTransaction(row, $event)"
                             />
-                            <span>{{ messages.mirror.attachRealizedPnl }}</span>
+                            <span>{{ row.extraType === 'BONIFICATION_INCOME' ? messages.mirror.attachBonificationIncome : messages.mirror.attachRealizedPnl }}</span>
                           </label>
-                          @if (row.attachRealizedPnl) {
+                          @if (row.attachExtraTransaction) {
                             <select
                               class="grid-input compact-grid-input"
-                              [ngModel]="row.realizedPnlTransactionId"
+                              [ngModel]="row.extraTransactionId"
                               name="mirror-pnl-transaction-{{ row.clientRowId }}"
-                              (ngModelChange)="updateMirrorRealizedPnlTransaction(row, $event)"
+                              (ngModelChange)="updateMirrorExtraTransaction(row, $event)"
                             >
                               <option value=""></option>
                               @for (group of mirrorPnlCandidateGroups(row); track group.label) {
@@ -461,7 +472,9 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
                               }
                             </select>
                           }
-                          <div class="mirror-inline-hint">{{ messages.mirror.sellAttachHint }}</div>
+                          <div class="mirror-inline-hint">
+                            {{ row.extraType === 'BONIFICATION_INCOME' ? messages.mirror.bonificationAttachHint : messages.mirror.sellAttachHint }}
+                          </div>
                         } @else {
                           <span class="mirror-inline-hint">{{ messages.mirror.notApplicable }}</span>
                         }
@@ -616,6 +629,23 @@ const MIRROR_OPTION_DESCRIPTION_MAX_CHARS =
       min-width: 0;
       width: 100%;
     }
+
+    .mirror-modal .insert-preview-table th,
+    .mirror-modal .insert-preview-table td {
+      padding: 8px 5px 8px 5px;
+    }
+
+    .mirror-modal .insert-preview-table .mirror-row-buy td {
+      background: color-mix(in srgb, #6aa89c 14%, var(--surface));
+    }
+
+    .mirror-modal .insert-preview-table .mirror-row-sell td {
+      background: color-mix(in srgb, #d6a56b 16%, var(--surface));
+    }
+
+    .mirror-modal .insert-preview-table .mirror-row-bonification td {
+      background: color-mix(in srgb, #8aa0b8 14%, var(--surface));
+    }
   `],
 })
 export class InvestmentInsertComponent implements OnInit, AfterViewInit {
@@ -627,7 +657,6 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   readonly messages = uiMessages.investments.insert;
   readonly rows = signal<DraftOperationRow[]>([]);
   readonly saving = signal(false);
-  readonly operations = signal<InvestmentOperation[]>([]);
   readonly positionPreviewRows = signal<InvestmentPositionPreviewRow[]>([]);
   readonly previewBlocked = signal(false);
   readonly previewBlockedHint = signal<string | null>(null);
@@ -637,12 +666,17 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   readonly mirrorRows = signal<MirroredDraftRow[]>([]);
   readonly mirrorCandidates = signal<MirrorCandidate[]>([]);
   readonly mirrorPnlCandidates = signal<MirrorCandidate[]>([]);
+  readonly mirrorPreviewRows = signal<InvestmentMirrorPreviewRow[]>([]);
   readonly activeAccounts = signal<Account[]>([]);
   readonly brokerageAccounts = signal<Account[]>([]);
   readonly investmentAccounts = signal<Account[]>([]);
   readonly sellAutomationConfigured = computed(() => {
     const integration = this.userConfigService.investmentIntegrationConfig();
     return !!integration.sell_gain_category_id && !!integration.sell_loss_category_id;
+  });
+  readonly bonificationAutomationConfigured = computed(() => {
+    const integration = this.userConfigService.investmentIntegrationConfig();
+    return !!integration.bonification_income_category_id;
   });
 
   private nextId = 1;
@@ -684,6 +718,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
           this.previewRowErrors.set(preview.rowErrors ?? {});
           if (preview.blocked) {
             this.positionPreviewRows.set([]);
+            this.mirrorPreviewRows.set([]);
             return;
           }
           if (preview.clear || preview.position_preview_rows.length > 0) {
@@ -691,6 +726,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
             this.previewBlockedHint.set(null);
             this.previewRowErrors.set({});
             this.positionPreviewRows.set(preview.position_preview_rows ?? []);
+            this.mirrorPreviewRows.set(preview.mirror_preview_rows ?? []);
           }
         },
         error: () => {
@@ -698,6 +734,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
           this.previewBlockedHint.set(null);
           this.previewRowErrors.set({});
           this.positionPreviewRows.set([]);
+          this.mirrorPreviewRows.set([]);
         },
       });
 
@@ -712,11 +749,9 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     this.resetRows();
 
     forkJoin({
-      operations: this.investmentsService.listOperations(),
       referenceData: this.referenceData.load(),
     }).subscribe({
-      next: ({ operations }) => {
-        this.operations.set(operations);
+      next: () => {
         this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
         this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'BROKERAGE'));
         this.investmentAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'INVESTMENT'));
@@ -974,6 +1009,9 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     if (decimalToCents(row.totalFeeAmount) < 0) {
       errors.push('Taxa total inválida');
     }
+    if (row.operationType === 'AMORTIZATION' && decimalToCents(row.totalFeeAmount) !== 0) {
+      errors.push(this.messages.validation.amortizationFeeMustBeZero);
+    }
     const feeConflict = this.sameDayBrokerageFeeConflict(row);
     if (feeConflict) {
       errors.push(feeConflict);
@@ -992,13 +1030,22 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       return;
     }
     const filled = this.filledRows();
-    const mirroredCandidates = filled.filter((row) => row.operationType === 'BUY' || row.operationType === 'SELL');
+    const mirroredCandidates = filled.filter((row) =>
+      row.operationType === 'BUY'
+      || row.operationType === 'SELL'
+      || row.operationType === 'BONIFICATION'
+      || row.operationType === 'AMORTIZATION',
+    );
     if (mirroredCandidates.length > 0 && window.confirm(this.messages.mirror.confirm)) {
       if (!this.sellAutomationConfigured() && mirroredCandidates.some((row) => row.operationType === 'SELL')) {
         this.toast.error(this.messages.mirror.sellConfigRequired);
         return;
       }
-      this.openMirrorModal(mirroredCandidates);
+      if (!this.bonificationAutomationConfigured() && mirroredCandidates.some((row) => row.operationType === 'BONIFICATION')) {
+        this.toast.error(this.messages.mirror.bonificationConfigRequired);
+        return;
+      }
+      this.openMirrorModal();
       return;
     }
     this.submitImport(false, []);
@@ -1021,10 +1068,10 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     );
     const allTransfers = [...filtered].sort((left, right) => right.date.localeCompare(left.date));
     const nearbyTransfers = filtered
-      .filter((candidate) => daysBetweenIsoDates(candidate.date, isoFromDraftDate(row.date)) <= 7)
+      .filter((candidate) => daysBetweenIsoDates(candidate.date, row.date) <= 7)
       .sort((left, right) => {
-        const leftDistance = daysBetweenIsoDates(left.date, isoFromDraftDate(row.date));
-        const rightDistance = daysBetweenIsoDates(right.date, isoFromDraftDate(row.date));
+        const leftDistance = daysBetweenIsoDates(left.date, row.date);
+        const rightDistance = daysBetweenIsoDates(right.date, row.date);
         if (leftDistance === rightDistance) {
           return right.date.localeCompare(left.date);
         }
@@ -1047,29 +1094,68 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
   }
 
   mirrorSummaryLines(row: MirroredDraftRow): string[] {
-    const lines = [`${this.messages.mirror.transferAmount}: ${this.money(row.netAmount)}`];
-    if (row.operationType === 'SELL') {
-      lines.push(`${this.messages.mirror.realizedPnlAmount}: ${this.money(row.realizedPnlAmount)}`);
-      lines.push(`${this.messages.mirror.saleNetAmount}: ${this.money(row.netAmount + row.realizedPnlAmount)}`);
+    const lines = [`${this.messages.mirror.transferAmount}: ${this.money(row.transferAmount)}`];
+    if (row.extraType === 'REALIZED_PNL') {
+      lines.push(`${this.mirrorRealizedPnlLabel(row.extraAmount)}: ${this.money(Math.abs(row.extraAmount))}`);
+      lines.push(`${this.messages.mirror.saleNetAmount}: ${this.money(row.transferAmount + row.extraAmount)}`);
+    } else if (row.extraType === 'BONIFICATION_INCOME') {
+      lines.push(`${this.messages.mirror.bonificationIncomeAmount}: ${this.money(row.extraAmount)}`);
     }
     return lines;
   }
 
+  private mirrorRealizedPnlLabel(amount: number): string {
+    return amount < 0 ? 'Prejuízo' : 'Lucro';
+  }
+
+  mirrorDisplayDate(value: string): string {
+    return toCompactMirrorOptionDate(value);
+  }
+
+  private expectedMirrorExtraCategoryCode(row: MirroredDraftRow): string | null {
+    const integration = this.userConfigService.investmentIntegrationConfig();
+    if (row.extraType === 'BONIFICATION_INCOME') {
+      return this.categoryCodeById(integration.bonification_income_category_id ?? null);
+    }
+    if (row.extraType === 'REALIZED_PNL') {
+      return this.categoryCodeById(
+        row.extraAmount >= 0
+          ? (integration.sell_gain_category_id ?? null)
+          : (integration.sell_loss_category_id ?? null),
+      );
+    }
+    return null;
+  }
+
+  private categoryCodeById(categoryId: string | null): string | null {
+    if (!categoryId) {
+      return null;
+    }
+    return this.referenceData.flatCategories().find((category) => category.ID === categoryId)?.Code ?? null;
+  }
+
   mirrorPnlCandidateGroups(row: MirroredDraftRow): MirrorCandidateGroup[] {
     const brokerageCode = row.brokerageAccountCode.trim().toLowerCase();
-    const expectsPositivePnl = row.realizedPnlAmount >= 0;
+    const expectsPositivePnl = row.extraAmount >= 0;
+    const expectedCategoryCode = this.expectedMirrorExtraCategoryCode(row);
     const filtered = this.mirrorPnlCandidates().filter((candidate) => {
       if (brokerageCode && candidate.accountCode.trim().toLowerCase() !== brokerageCode) {
         return false;
+      }
+      if (expectedCategoryCode && candidate.categoryCode !== expectedCategoryCode) {
+        return false;
+      }
+      if (row.extraType === 'BONIFICATION_INCOME') {
+        return candidate.amount >= 0;
       }
       return expectsPositivePnl ? candidate.amount >= 0 : candidate.amount < 0;
     });
     const allCandidates = [...filtered].sort((left, right) => right.date.localeCompare(left.date));
     const nearbyCandidates = filtered
-      .filter((candidate) => daysBetweenIsoDates(candidate.date, isoFromDraftDate(row.date)) <= 7)
+      .filter((candidate) => daysBetweenIsoDates(candidate.date, row.date) <= 7)
       .sort((left, right) => {
-        const leftDistance = daysBetweenIsoDates(left.date, isoFromDraftDate(row.date));
-        const rightDistance = daysBetweenIsoDates(right.date, isoFromDraftDate(row.date));
+        const leftDistance = daysBetweenIsoDates(left.date, row.date);
+        const rightDistance = daysBetweenIsoDates(right.date, row.date);
         if (leftDistance === rightDistance) {
           return right.date.localeCompare(left.date);
         }
@@ -1077,10 +1163,12 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       });
 
     const groups: MirrorCandidateGroup[] = [];
+    const nearbyLabel = row.extraType === 'BONIFICATION_INCOME' ? 'Receitas perto da data' : 'Resultados perto da data';
+    const allLabel = row.extraType === 'BONIFICATION_INCOME' ? 'Todas as receitas' : 'Todos os resultados';
     if (nearbyCandidates.length > 0) {
-      groups.push({ label: 'Resultados perto da data', items: nearbyCandidates });
+      groups.push({ label: nearbyLabel, items: nearbyCandidates });
     }
-    groups.push({ label: 'Todos os resultados', items: allCandidates });
+    groups.push({ label: allLabel, items: allCandidates });
     return groups;
   }
 
@@ -1094,8 +1182,8 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       if (!row.transactionId) {
         errors.push('Transferência obrigatória');
       }
-      if (row.operationType === 'SELL' && row.attachRealizedPnl && !row.realizedPnlTransactionId) {
-        errors.push('Resultado obrigatório');
+      if (row.extraType !== 'NONE' && row.attachExtraTransaction && !row.extraTransactionId) {
+        errors.push(row.extraType === 'BONIFICATION_INCOME' ? 'Receita obrigatória' : 'Resultado obrigatório');
       }
       return errors;
     }
@@ -1150,16 +1238,16 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     this.mirrorRows.update((rows) => [...rows]);
   }
 
-  toggleMirrorRealizedPnl(row: MirroredDraftRow, value: boolean): void {
-    row.attachRealizedPnl = Boolean(value);
-    if (!row.attachRealizedPnl) {
-      row.realizedPnlTransactionId = '';
+  toggleMirrorExtraTransaction(row: MirroredDraftRow, value: boolean): void {
+    row.attachExtraTransaction = Boolean(value);
+    if (!row.attachExtraTransaction) {
+      row.extraTransactionId = '';
     }
     this.mirrorRows.update((rows) => [...rows]);
   }
 
-  updateMirrorRealizedPnlTransaction(row: MirroredDraftRow, value: string): void {
-    row.realizedPnlTransactionId = value.trim();
+  updateMirrorExtraTransaction(row: MirroredDraftRow, value: string): void {
+    row.extraTransactionId = value.trim();
     this.mirrorRows.update((rows) => [...rows]);
   }
 
@@ -1171,10 +1259,10 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
       const mismatches = this.mirrorRows()
         .map((row) => {
           const candidate = this.mirrorCandidates().find((item) => item.id === row.transactionId);
-          if (!candidate || candidate.amount === row.netAmount) {
+          if (!candidate || candidate.amount === row.transferAmount) {
             return null;
           }
-          return `${row.description}: ${this.money(candidate.amount)} -> ${this.money(row.netAmount)}`;
+          return `${row.description}: ${this.money(candidate.amount)} -> ${this.money(row.transferAmount)}`;
         })
         .filter((item): item is string => Boolean(item));
       if (mismatches.length > 0) {
@@ -1202,18 +1290,32 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
     this.rows.set(Array.from({ length: INITIAL_ROWS }, () => this.createEmptyRow()));
   }
 
-  private openMirrorModal(rows: DraftOperationRow[]): void {
+  private openMirrorModal(): void {
     this.mirrorSourceApplied = false;
     this.mirrorDestinationApplied = false;
     this.mirrorMode.set('create');
-    this.mirrorRows.set(buildGroupedMirrorDraftRows(rows, this.operations()));
+    this.mirrorRows.set(this.mirrorPreviewRows().map((row) => ({
+      clientRowId: row.client_row_id,
+      groupKey: row.group_key,
+      operationType: row.operation_type,
+      brokerageAccountCode: row.brokerage_account_code,
+      investmentAccountCode: row.investment_account_code,
+      date: row.date,
+      description: row.description,
+      transferAmount: row.transfer_amount,
+      extraAmount: row.extra_amount,
+      extraType: row.extra_type,
+      sourceAccountCode: row.source_account_code,
+      destinationAccountCode: row.destination_account_code,
+      transactionId: '',
+      attachExtraTransaction: false,
+      extraTransactionId: '',
+    })));
     this.mirrorCandidates.set([]);
     this.mirrorPnlCandidates.set([]);
     this.mirrorModalOpen.set(true);
 
-    const brokerageAccountCodes = Array.from(
-      new Set(rows.map((row) => row.brokerageAccountCode.trim()).filter((code) => code.length > 0)),
-    );
+    const brokerageAccountCodes = Array.from(new Set(this.mirrorRows().map((row) => row.brokerageAccountCode.trim()).filter((code) => code.length > 0)));
     forkJoin({
       transfers: this.transactionsService.list({
         operation: 'transfer',
@@ -1248,6 +1350,7 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
               date: tx.date,
               accountCode: tx.account_code,
               transferAccountCode: '',
+              categoryCode: tx.category_code,
               label: buildCompactMirrorOptionLabel(tx.date, tx.description, tx.amount),
             })),
         );
@@ -1278,7 +1381,10 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
         source_account_code: row.sourceAccountCode,
         destination_account_code: row.destinationAccountCode,
         transaction_id: row.transactionId || null,
-        realized_pnl_transaction_id: row.attachRealizedPnl ? (row.realizedPnlTransactionId || null) : null,
+        realized_pnl_transaction_id:
+          row.extraType === 'REALIZED_PNL' && row.attachExtraTransaction ? (row.extraTransactionId || null) : null,
+        bonification_income_transaction_id:
+          row.extraType === 'BONIFICATION_INCOME' && row.attachExtraTransaction ? (row.extraTransactionId || null) : null,
       })),
     }).subscribe({
       next: (result) => {
@@ -1292,11 +1398,9 @@ export class InvestmentInsertComponent implements OnInit, AfterViewInit {
         this.mirrorPnlCandidates.set([]);
         this.resetRows();
         forkJoin({
-          operations: this.investmentsService.listOperations(),
           referenceData: this.referenceData.reload(),
         }).subscribe({
-          next: ({ operations }) => {
-            this.operations.set(operations);
+          next: () => {
             this.activeAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt));
             this.brokerageAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'BROKERAGE'));
             this.investmentAccounts.set(this.referenceData.accounts().filter((account) => !account.DeactivatedAt && account.asset_role === 'INVESTMENT'));
@@ -1608,6 +1712,9 @@ function normalizeOperationType(value: string): InvestmentOperationType | '' {
   if (normalized === 'bonification' || normalized === 'bonificação' || normalized === 'bonificacao') {
     return 'BONIFICATION';
   }
+  if (normalized === 'amortization' || normalized === 'amortização' || normalized === 'amortizacao') {
+    return 'AMORTIZATION';
+  }
   return '';
 }
 
@@ -1717,7 +1824,11 @@ function truncateMirrorOptionDescription(description: string, maxChars: number):
 }
 
 function toCompactMirrorOptionDate(value: string): string {
-  const isoDate = value.slice(0, 10);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  const isoDate = date.toISOString().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
     return value;
   }
@@ -1728,242 +1839,8 @@ function toCompactMirrorOptionAmount(amount: number): string {
   return centsToCurrency(Math.abs(amount)).replace(/\u00a0/g, ' ');
 }
 
-function allocatePreviewFees(
-  rows: Array<{
-    row: DraftOperationRow;
-    dateKey: string;
-    brokerageAccountCode: string;
-    quantity: number;
-    unitPrice: number;
-    totalFeeAmount: number;
-  }>,
-): Map<number, number> {
-  const result = new Map<number, number>();
-  const grouped = new Map<string, typeof rows>();
-  for (const row of rows) {
-    const groupKey = `${row.dateKey}:${row.brokerageAccountCode.trim().toLocaleLowerCase('pt-BR')}`;
-    const current = grouped.get(groupKey) ?? [];
-    current.push(row);
-    grouped.set(groupKey, current);
-  }
-  for (const groupRows of grouped.values()) {
-    const dayFee = groupRows[0]?.totalFeeAmount ?? 0;
-    const totalGross = groupRows.reduce((sum, row) => sum + row.quantity * row.unitPrice, 0);
-    if (dayFee <= 0 || totalGross <= 0) {
-      groupRows.forEach((row) => result.set(row.row.id, 0));
-      continue;
-    }
-    let remaining = dayFee;
-    groupRows.forEach((row, index) => {
-      if (index === groupRows.length - 1) {
-        result.set(row.row.id, remaining);
-        return;
-      }
-      const allocated = Math.min(remaining, divideRounded(dayFee * row.quantity * row.unitPrice, totalGross));
-      result.set(row.row.id, allocated);
-      remaining -= allocated;
-    });
-  }
-  return result;
-}
-
-function divideRounded(numerator: number, denominator: number): number {
-  if (!denominator) {
-    return 0;
-  }
-  return Math.round(numerator / denominator);
-}
-
-function mirrorDescription(row: DraftOperationRow): string {
-  return mirrorDescriptionFromType(row.operationType, Number(row.quantity) || 0, row.assetCode);
-}
-
-function mirrorDescriptionFromType(
-  operationType: InvestmentOperationType | '',
-  quantity: number,
-  assetCode: string,
-): string {
-  const normalizedCode = assetCode.trim().toUpperCase();
-  if (operationType === 'SELL') {
-    return `VENDA DE ${quantity} ${normalizedCode}`;
-  }
-  return `COMPRA DE ${quantity} ${normalizedCode}`;
-}
-
-function draftCashMovementGroupKey(row: DraftOperationRow): string {
-  const dateKey = normalizedDateKey(row.date);
-  return [
-    dateKey,
-    row.brokerageAccountCode.trim().toLocaleLowerCase('pt-BR'),
-    row.investmentAccountCode.trim().toLocaleLowerCase('pt-BR'),
-    row.assetCode.trim().toUpperCase(),
-    row.operationType,
-  ].join('|');
-}
-
-function buildGroupedMirrorDraftRows(rows: DraftOperationRow[], existingOperations: InvestmentOperation[]): MirroredDraftRow[] {
-  const allocatedFees = allocatePreviewFees(rows
-    .filter((row) => row.operationType !== 'BONIFICATION')
-    .map((row) => ({
-      row,
-      dateKey: normalizedDateKey(row.date) ?? '',
-      brokerageAccountCode: row.brokerageAccountCode,
-      quantity: Number(row.quantity) || 0,
-      unitPrice: decimalToCents(row.unitPrice),
-      totalFeeAmount: decimalToCents(row.totalFeeAmount),
-    }))
-    .filter((row) => row.dateKey && row.brokerageAccountCode.trim().length > 0),
-  );
-  const currentByAsset = new Map<string, { quantity: number; costBasis: number }>();
-  const grouped = new Map<string, MirroredDraftRow>();
-
-  const timeline = [
-    ...existingOperations.map((operation) => ({
-      kind: 'existing' as const,
-      date: operation.date.slice(0, 10),
-      createdAt: operation.created_at,
-      id: operation.id,
-      operation,
-    })),
-    ...rows
-      .map((row, index) => ({
-        kind: 'draft' as const,
-        date: brazilianDateToQuery(row.date),
-        createdAt: '',
-        id: String(index),
-        index,
-        row,
-      }))
-      .filter((item) => item.row.operationType === 'BUY' || item.row.operationType === 'SELL'),
-  ].sort((left, right) => {
-    if (left.date === right.date) {
-      if (left.kind !== right.kind) {
-        return left.kind === 'existing' ? -1 : 1;
-      }
-      if (left.kind === 'existing' && right.kind === 'existing') {
-        if (left.createdAt === right.createdAt) {
-          return left.id.localeCompare(right.id);
-        }
-        return left.createdAt.localeCompare(right.createdAt);
-      }
-      if (left.kind === 'draft' && right.kind === 'draft') {
-        return left.index - right.index;
-      }
-      return 0;
-    }
-    return left.date.localeCompare(right.date);
-  });
-
-  for (const item of timeline) {
-    if (item.kind === 'existing') {
-      const operation = item.operation;
-      const assetCode = operation.asset_code.trim().toUpperCase();
-      const currentState = currentByAsset.get(assetCode) ?? { quantity: 0, costBasis: 0 };
-      if (operation.operation_type === 'BUY' || operation.operation_type === 'BONIFICATION') {
-        currentState.quantity += operation.quantity;
-        currentState.costBasis += operation.net_amount;
-      } else if (operation.operation_type === 'SELL') {
-        if (currentState.quantity > 0) {
-          const releasedCostBasis = operation.quantity === currentState.quantity
-            ? currentState.costBasis
-            : divideRounded(currentState.costBasis * operation.quantity, currentState.quantity);
-          currentState.quantity -= operation.quantity;
-          currentState.costBasis -= releasedCostBasis;
-          if (currentState.quantity <= 0) {
-            currentState.quantity = 0;
-            currentState.costBasis = 0;
-          }
-        }
-      }
-      currentByAsset.set(assetCode, currentState);
-      continue;
-    }
-
-    const row = item.row;
-    if (row.operationType !== 'BUY' && row.operationType !== 'SELL') {
-      continue;
-    }
-    const groupKey = draftCashMovementGroupKey(row);
-    const quantity = Number(row.quantity) || 0;
-    const unitPrice = decimalToCents(row.unitPrice);
-    const allocatedFee = allocatedFees.get(row.id) ?? 0;
-    const assetCode = row.assetCode.trim().toUpperCase();
-    const currentState = currentByAsset.get(assetCode) ?? { quantity: 0, costBasis: 0 };
-    let netAmount = quantity * unitPrice + allocatedFee;
-    let realizedPnlAmount = 0;
-
-    if (row.operationType === 'SELL') {
-      const saleNetAmount = quantity * unitPrice - allocatedFee;
-      if (currentState.quantity > 0) {
-        netAmount = quantity === currentState.quantity
-          ? currentState.costBasis
-          : divideRounded(currentState.costBasis * quantity, currentState.quantity);
-        realizedPnlAmount = saleNetAmount - netAmount;
-        currentState.quantity -= quantity;
-        currentState.costBasis -= netAmount;
-        if (currentState.quantity <= 0) {
-          currentState.quantity = 0;
-          currentState.costBasis = 0;
-        }
-      } else {
-        netAmount = 0;
-        realizedPnlAmount = saleNetAmount;
-      }
-    } else {
-      currentState.quantity += quantity;
-      currentState.costBasis += netAmount;
-    }
-    currentByAsset.set(assetCode, currentState);
-
-    const current = grouped.get(groupKey);
-    if (!current) {
-      grouped.set(groupKey, {
-        clientRowId: mirrorDraftRowId(row.id),
-        groupKey,
-        operationType: row.operationType,
-        brokerageAccountCode: row.brokerageAccountCode,
-        investmentAccountCode: row.investmentAccountCode,
-        date: normalizeDraftDate(row.date),
-        description: mirrorDescriptionFromType(row.operationType, quantity, assetCode),
-        netAmount,
-        realizedPnlAmount,
-        sourceAccountCode: row.operationType === 'SELL' ? row.investmentAccountCode : row.brokerageAccountCode,
-        destinationAccountCode: row.operationType === 'SELL' ? row.brokerageAccountCode : row.investmentAccountCode,
-        transactionId: '',
-        attachRealizedPnl: false,
-        realizedPnlTransactionId: '',
-      });
-      continue;
-    }
-    current.netAmount += netAmount;
-    current.realizedPnlAmount += realizedPnlAmount;
-    current.description = mirrorDescriptionFromType(
-      row.operationType,
-      extractQuantityFromMirrorDescription(current.description) + quantity,
-      assetCode,
-    );
-  }
-  return Array.from(grouped.values());
-}
-
-function extractQuantityFromMirrorDescription(description: string): number {
-  const match = /^(?:COMPRA|VENDA) DE (\d+) /.exec(description);
-  if (!match) {
-    return 0;
-  }
-  return Number(match[1]) || 0;
-}
-
 function mirrorDraftRowId(rowId: number): string {
   return `row-${rowId}`;
-}
-
-function isoFromDraftDate(value: string): string {
-  const normalized = normalizedDateKey(value);
-  if (!normalized) {
-    return '';
-  }
-  return dateInputToIso(brazilianDateToQuery(normalized));
 }
 
 function daysBetweenIsoDates(left: string, right: string): number {

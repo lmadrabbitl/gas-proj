@@ -18,6 +18,7 @@ export const uiMessages = {
       BUY: 'Compra',
       SELL: 'Venda',
       BONIFICATION: 'Bonificação',
+      AMORTIZATION: 'Amortização',
     },
     categoryType: {
       INCOME: 'Receita',
@@ -227,6 +228,7 @@ export const uiMessages = {
         buy: 'Compra',
         sell: 'Venda',
         bonification: 'Bonificação',
+        amortization: 'Amortização',
       },
       preview: {
         title: 'Prévia de posição',
@@ -248,21 +250,27 @@ export const uiMessages = {
       mirror: {
         confirm: 'Deseja criar ou vincular também as transações espelhadas dessas operações?',
         sellConfigRequired: 'Operações de venda podem ser vinculadas, mas exigem a configuração das categorias de lucro e prejuízo em Carteiras > Configurações.',
+        bonificationConfigRequired: 'Operações de bonificação podem ser vinculadas, mas exigem a configuração da categoria de receita de bonificação em Carteiras > Configurações.',
         title: 'Transferências vinculadas',
         subtitle: 'As datas, descrições e valores serão derivados das operações. Em vendas, a transferência usa o custo liberado da posição, não o total recebido na venda.',
         createMode: 'Criar nova transferência',
         attachMode: 'Vincular transferência existente',
         source: 'Conta origem',
         destination: 'Conta destino',
-        summary: 'Resumo',
+        summary: 'Transações',
         transferAmount: 'Transferência',
         realizedPnlAmount: 'Resultado',
         saleNetAmount: 'Total da venda',
         description: 'Descrição',
         existingTransaction: 'Transferência existente',
+        extraTransaction: 'Resultado / receita',
         realizedPnl: 'Resultado da venda',
         attachRealizedPnl: 'Vincular resultado existente',
         sellAttachHint: 'Ao vincular um resultado existente, conta, categoria, data, descrição e valor serão ajustados para refletir o resultado realizado.',
+        bonificationIncomeAmount: 'Bonificação',
+        bonificationIncome: 'Receita da bonificação',
+        attachBonificationIncome: 'Vincular receita existente',
+        bonificationAttachHint: 'Ao vincular uma receita existente, conta, categoria, data, descrição e valor serão ajustados para refletir a bonificação.',
         notApplicable: 'Não se aplica',
         applyAllHint: 'O primeiro valor escolhido em cada coluna será copiado para as demais linhas.',
         back: 'Voltar',
@@ -279,6 +287,9 @@ export const uiMessages = {
         previewBlockedHint: 'Corrija os campos destacados para atualizar a pré-visualização.',
         sameDayBrokerageFeeConflict: 'Operações da mesma data e corretora devem usar a mesma taxa total do dia.',
         sellExceedsPosition: 'Não é possível vender {attempted} porque a posição disponível para este ativo até esta data é {available}.',
+      },
+      validation: {
+        amortizationFeeMustBeZero: 'A taxa da amortização precisa ser zero.',
       },
     },
     positions: {
@@ -413,17 +424,26 @@ export const uiMessages = {
         attachMode: 'Vincular transferência existente',
         source: 'Conta origem',
         destination: 'Conta destino',
-        summary: 'Resumo',
+        summary: 'Transações',
         transferAmount: 'Transferência',
         realizedPnlAmount: 'Resultado',
         saleNetAmount: 'Total da venda',
         existingTransaction: 'Transferência existente',
+        extraTransaction: 'Resultado / receita',
         realizedPnl: 'Resultado da venda',
         attachRealizedPnl: 'Vincular resultado existente',
         sellAttachHint: 'Ao vincular um resultado existente, conta, categoria, data, descrição e valor serão ajustados para refletir o resultado realizado.',
         notApplicable: 'Não se aplica',
         save: 'Vincular',
         sellConfigRequired: 'Operações de venda podem ser vinculadas, mas exigem a configuração das categorias de lucro e prejuízo em Carteiras > Configurações.',
+        bonificationConfigRequired: 'Operações de bonificação podem ser vinculadas, mas exigem a configuração da categoria de receita de bonificação em Carteiras > Configurações.',
+        bonificationIncomeAmount: 'Bonificação',
+        bonificationIncome: 'Receita da bonificação',
+        attachBonificationIncome: 'Vincular receita existente',
+        bonificationAttachHint: 'Ao vincular uma receita existente, conta, categoria, data, descrição e valor serão ajustados para refletir a bonificação.',
+      },
+      validation: {
+        amortizationFeeMustBeZero: 'A taxa da amortização precisa ser zero.',
       },
       sellAutomationWarning: {
         title: 'Automação de vendas ainda não configurada',
@@ -523,6 +543,9 @@ export const uiMessages = {
         sellLossCategoryLabel: 'Categoria para prejuizo com venda',
         sellLossCategoryPlaceholder: 'Selecione uma categoria de despesa',
         sellLossCategoryHint: 'Usada na transacao automatica de resultado quando a venda gerar prejuizo realizado.',
+        bonificationIncomeCategoryLabel: 'Categoria para receita de bonificacao',
+        bonificationIncomeCategoryPlaceholder: 'Selecione uma categoria de receita',
+        bonificationIncomeCategoryHint: 'Usada na receita automatica criada quando uma bonificacao for espelhada.',
         toleranceHint:
           'A analise considera a carteira balanceada quando cada ativo elegivel fica dentro dessa faixa do peso-alvo, usando apenas compras e quantidades inteiras.',
       },
@@ -729,6 +752,7 @@ export const uiMessages = {
       mixedSelectionError: 'Selecione apenas transações do mesmo tipo (mesma cor) para editar em lote.',
       deleteTitle: 'Excluir',
       deleteAria: 'Excluir transação',
+      removeSelected: 'Excluir transações selecionadas',
       deleteBlockedMirror: 'Transações vinculadas a operações só podem ser excluídas pela tela de operações.',
       settingsTitle: 'Abrir configurações da lista',
       settingsAria: 'Abrir configurações da lista de transações',
@@ -930,6 +954,12 @@ export function deleteAccountPermanentConfirmationMessage(accountName: string): 
 
 export function deleteTransactionConfirmationMessage(description: string): string {
   return `Excluir a transação "${description}"?`;
+}
+
+export function deleteBulkTransactionsConfirmationMessage(count: number): string {
+  return count === 1
+    ? 'Excluir a transação selecionada?'
+    : `Excluir as ${count} transações selecionadas?`;
 }
 
 export function insertTransactionsSuccessMessage(count: number): string {

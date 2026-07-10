@@ -90,18 +90,20 @@ type ImportOperationInput struct {
 }
 
 type ImportMirroredTransactionDraftInput struct {
-	ClientRowID              string     `json:"client_row_id" binding:"required"`
-	SourceAccountCode        string     `json:"source_account_code"`
-	DestinationAccountCode   string     `json:"destination_account_code"`
-	TransactionID            *uuid.UUID `json:"transaction_id"`
-	RealizedPNLTransactionID *uuid.UUID `json:"realized_pnl_transaction_id"`
+	ClientRowID                     string     `json:"client_row_id" binding:"required"`
+	SourceAccountCode               string     `json:"source_account_code"`
+	DestinationAccountCode          string     `json:"destination_account_code"`
+	TransactionID                   *uuid.UUID `json:"transaction_id"`
+	RealizedPNLTransactionID        *uuid.UUID `json:"realized_pnl_transaction_id"`
+	BonificationIncomeTransactionID *uuid.UUID `json:"bonification_income_transaction_id"`
 }
 
 type CreateOperationMirrorInput struct {
-	SourceAccountCode        string     `json:"source_account_code"`
-	DestinationAccountCode   string     `json:"destination_account_code"`
-	TransactionID            *uuid.UUID `json:"transaction_id"`
-	RealizedPNLTransactionID *uuid.UUID `json:"realized_pnl_transaction_id"`
+	SourceAccountCode               string     `json:"source_account_code"`
+	DestinationAccountCode          string     `json:"destination_account_code"`
+	TransactionID                   *uuid.UUID `json:"transaction_id"`
+	RealizedPNLTransactionID        *uuid.UUID `json:"realized_pnl_transaction_id"`
+	BonificationIncomeTransactionID *uuid.UUID `json:"bonification_income_transaction_id"`
 }
 
 type CreateOperationMirrorsBulkInput struct {
@@ -113,11 +115,12 @@ type DeleteOperationsBulkInput struct {
 }
 
 type CreateOperationMirrorBulkItemInput struct {
-	OperationID              uuid.UUID  `json:"operation_id" binding:"required"`
-	SourceAccountCode        string     `json:"source_account_code"`
-	DestinationAccountCode   string     `json:"destination_account_code"`
-	TransactionID            *uuid.UUID `json:"transaction_id"`
-	RealizedPNLTransactionID *uuid.UUID `json:"realized_pnl_transaction_id"`
+	OperationID                     uuid.UUID  `json:"operation_id" binding:"required"`
+	SourceAccountCode               string     `json:"source_account_code"`
+	DestinationAccountCode          string     `json:"destination_account_code"`
+	TransactionID                   *uuid.UUID `json:"transaction_id"`
+	RealizedPNLTransactionID        *uuid.UUID `json:"realized_pnl_transaction_id"`
+	BonificationIncomeTransactionID *uuid.UUID `json:"bonification_income_transaction_id"`
 }
 
 type CreateBulkOperationInput struct {
@@ -305,11 +308,12 @@ func (h *Handler) PreviewImportOperations(c *gin.Context) {
 	}
 	for _, draft := range input.MirroredTransactions {
 		req.MirroredTransactions = append(req.MirroredTransactions, MirroredTransactionDraftRequest{
-			ClientRowID:              draft.ClientRowID,
-			SourceAccountCode:        draft.SourceAccountCode,
-			DestinationAccountCode:   draft.DestinationAccountCode,
-			TransactionID:            draft.TransactionID,
-			RealizedPNLTransactionID: draft.RealizedPNLTransactionID,
+			ClientRowID:                     draft.ClientRowID,
+			SourceAccountCode:               draft.SourceAccountCode,
+			DestinationAccountCode:          draft.DestinationAccountCode,
+			TransactionID:                   draft.TransactionID,
+			RealizedPNLTransactionID:        draft.RealizedPNLTransactionID,
+			BonificationIncomeTransactionID: draft.BonificationIncomeTransactionID,
 		})
 	}
 
@@ -592,11 +596,12 @@ func (h *Handler) ImportOperations(c *gin.Context) {
 	}
 	for _, draft := range input.MirroredTransactions {
 		req.MirroredTransactions = append(req.MirroredTransactions, MirroredTransactionDraftRequest{
-			ClientRowID:              strings.TrimSpace(draft.ClientRowID),
-			SourceAccountCode:        strings.TrimSpace(draft.SourceAccountCode),
-			DestinationAccountCode:   strings.TrimSpace(draft.DestinationAccountCode),
-			TransactionID:            draft.TransactionID,
-			RealizedPNLTransactionID: draft.RealizedPNLTransactionID,
+			ClientRowID:                     strings.TrimSpace(draft.ClientRowID),
+			SourceAccountCode:               strings.TrimSpace(draft.SourceAccountCode),
+			DestinationAccountCode:          strings.TrimSpace(draft.DestinationAccountCode),
+			TransactionID:                   draft.TransactionID,
+			RealizedPNLTransactionID:        draft.RealizedPNLTransactionID,
+			BonificationIncomeTransactionID: draft.BonificationIncomeTransactionID,
 		})
 	}
 
@@ -682,10 +687,11 @@ func (h *Handler) CreateOperationMirror(c *gin.Context) {
 	}
 
 	operation, err := h.service.CreateOperationMirror(userID, operationID, CreateOperationMirrorRequest{
-		SourceAccountCode:        input.SourceAccountCode,
-		DestinationAccountCode:   input.DestinationAccountCode,
-		TransactionID:            input.TransactionID,
-		RealizedPNLTransactionID: input.RealizedPNLTransactionID,
+		SourceAccountCode:               input.SourceAccountCode,
+		DestinationAccountCode:          input.DestinationAccountCode,
+		TransactionID:                   input.TransactionID,
+		RealizedPNLTransactionID:        input.RealizedPNLTransactionID,
+		BonificationIncomeTransactionID: input.BonificationIncomeTransactionID,
 	})
 	if err != nil {
 		appHttp.HandleError(c, err)
@@ -708,11 +714,12 @@ func (h *Handler) CreateOperationMirrorsBulk(c *gin.Context) {
 	items := make([]CreateOperationMirrorBulkItemRequest, 0, len(input.Items))
 	for _, item := range input.Items {
 		items = append(items, CreateOperationMirrorBulkItemRequest{
-			OperationID:              item.OperationID,
-			SourceAccountCode:        item.SourceAccountCode,
-			DestinationAccountCode:   item.DestinationAccountCode,
-			TransactionID:            item.TransactionID,
-			RealizedPNLTransactionID: item.RealizedPNLTransactionID,
+			OperationID:                     item.OperationID,
+			SourceAccountCode:               item.SourceAccountCode,
+			DestinationAccountCode:          item.DestinationAccountCode,
+			TransactionID:                   item.TransactionID,
+			RealizedPNLTransactionID:        item.RealizedPNLTransactionID,
+			BonificationIncomeTransactionID: item.BonificationIncomeTransactionID,
 		})
 	}
 	operations, err := h.service.CreateOperationMirrorsBulk(userID, CreateOperationMirrorsBulkRequest{Items: items})

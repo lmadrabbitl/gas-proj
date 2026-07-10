@@ -63,6 +63,10 @@ type BulkChangeTransactionInput struct {
 	ExcludeFromDashboard *bool       `json:"exclude_from_dashboard"`
 }
 
+type BulkDeleteTransactionInput struct {
+	IDs []uuid.UUID `json:"ids" binding:"required"`
+}
+
 type TransactionResponse struct {
 	Transactions []TransactionResponseItem        `json:"transactions"`
 	Pagination   PaginationInfo                   `json:"pagination"`
@@ -120,6 +124,7 @@ func (h *Handler) RegisterRoutes(authMw *middleware.AuthMiddleware, r gin.IRoute
 	r.POST("/transactions", authMw.CheckAuthMiddleware(), h.CreateTransaction)
 	r.GET("/transactions", authMw.CheckAuthMiddleware(), h.GetTransactions)
 	r.PATCH("/transactions/bulk", authMw.CheckAuthMiddleware(), h.UpdateTransactionsBulk)
+	r.POST("/transactions/bulk-delete", authMw.CheckAuthMiddleware(), h.DeleteTransactionsBulk)
 	r.GET("/transactions/:id", authMw.CheckAuthMiddleware(), h.GetTransactionByID)
 	r.PATCH("/transactions/:id", authMw.CheckAuthMiddleware(), h.UpdateTransaction)
 	r.DELETE("/transactions/:id", authMw.CheckAuthMiddleware(), h.DeleteTransaction)
@@ -550,6 +555,31 @@ func (h *Handler) DeleteTransaction(c *gin.Context) {
 	}
 
 	if err := h.service.DeleteTransaction(userID, idUUID); err != nil {
+		appHttp.HandleError(c, err)
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) DeleteTransactionsBulk(c *gin.Context) {
+	var req BulkDeleteTransactionInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		appHttp.HandleError(c, err)
+		return
+	}
+	if len(req.IDs) == 0 {
+		appHttp.HandleError(c, appErr.ErrInvalidInputWithMessage("at least one transaction id is required", nil))
+		return
+	}
+
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		appHttp.HandleError(c, errors.ErrInvalidLoginPassword())
+		return
+	}
+
+	if err := h.service.DeleteTransactionsBulk(userID, req.IDs); err != nil {
 		appHttp.HandleError(c, err)
 		return
 	}

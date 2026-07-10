@@ -85,6 +85,7 @@ func (serv *service) UpdateConfig(userID uuid.UUID, req UpdateConfigRequest) (*C
 		config.Settings.Investments.Integration.WatchedCategoryIDs = normalizeWatchedCategoryIDs(req.Settings.Investments.Integration.WatchedCategoryIDs)
 		config.Settings.Investments.Integration.SellGainCategoryID = normalizeOptionalUUID(req.Settings.Investments.Integration.SellGainCategoryID)
 		config.Settings.Investments.Integration.SellLossCategoryID = normalizeOptionalUUID(req.Settings.Investments.Integration.SellLossCategoryID)
+		config.Settings.Investments.Integration.BonificationIncomeCategoryID = normalizeOptionalUUID(req.Settings.Investments.Integration.BonificationIncomeCategoryID)
 	}
 	if req.Settings != nil && req.Settings.UI != nil && req.Settings.UI.HideAmounts != nil {
 		config.Settings.UI.HideAmounts = *req.Settings.UI.HideAmounts
@@ -144,6 +145,7 @@ func defaultConfig() *Config {
 					WatchedCategoryIDs: []uuid.UUID{},
 					SellGainCategoryID: nil,
 					SellLossCategoryID: nil,
+					BonificationIncomeCategoryID: nil,
 				},
 			},
 			UI: UIConfig{
@@ -179,6 +181,7 @@ func decodeConfig(row *UserConfig) (*Config, error) {
 	config.Settings.Investments.Integration.WatchedCategoryIDs = normalizeWatchedCategoryIDs(config.Settings.Investments.Integration.WatchedCategoryIDs)
 	config.Settings.Investments.Integration.SellGainCategoryID = normalizeOptionalUUID(config.Settings.Investments.Integration.SellGainCategoryID)
 	config.Settings.Investments.Integration.SellLossCategoryID = normalizeOptionalUUID(config.Settings.Investments.Integration.SellLossCategoryID)
+	config.Settings.Investments.Integration.BonificationIncomeCategoryID = normalizeOptionalUUID(config.Settings.Investments.Integration.BonificationIncomeCategoryID)
 
 	return config, nil
 }

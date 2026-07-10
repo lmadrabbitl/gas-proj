@@ -166,6 +166,7 @@ describe('TransactionsComponent', () => {
     update: vi.fn().mockReturnValue(of({})),
     updateMany: vi.fn().mockReturnValue(of(2)),
     delete: vi.fn(),
+    deleteMany: vi.fn().mockReturnValue(of(void 0)),
   };
 
   const referenceData = {
@@ -591,6 +592,39 @@ describe('TransactionsComponent', () => {
     });
 
     expect(transactionsService.delete).toHaveBeenCalledWith('tx-1');
+    expect(referenceData.reload).toHaveBeenCalledTimes(1);
+    confirmSpy.mockRestore();
+  });
+
+  it('reloads reference data after deleting selected transactions', async () => {
+    transactions.set([
+      {
+        id: 'tx-1',
+        category_code: 'supermercado',
+        description: 'Mercado',
+        date: '2026-01-11T00:00:00Z',
+        account_code: 'santander',
+        amount: -1200,
+      },
+      {
+        id: 'tx-2',
+        category_code: 'lazer',
+        description: 'Cinema',
+        date: '2026-01-12T00:00:00Z',
+        account_code: 'santander',
+        amount: -800,
+      },
+    ]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const fixture = TestBed.createComponent(TransactionsComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    fixture.componentInstance.toggleTransactionSelection('tx-1');
+    fixture.componentInstance.toggleTransactionSelection('tx-2');
+    fixture.componentInstance.deleteSelected();
+
+    expect(transactionsService.deleteMany).toHaveBeenCalledWith(['tx-1', 'tx-2']);
     expect(referenceData.reload).toHaveBeenCalledTimes(1);
     confirmSpy.mockRestore();
   });

@@ -783,6 +783,7 @@ type serviceTestRepo struct {
 	listPositionsFn         func(userID uuid.UUID) ([]PositionRow, error)
 	listAssetQuoteCachesFn  func(assetCodes []string) ([]AssetQuoteCache, error)
 	upsertAssetQuoteCacheFn func(cache *AssetQuoteCache) error
+	listOperationsFn        func(userID uuid.UUID) ([]OperationRow, error)
 	listAssetOperationsFn   func(userID, assetID uuid.UUID) ([]Operation, error)
 	upsertPositionFn        func(position *Position) error
 }
@@ -857,7 +858,10 @@ func (r *serviceTestRepo) CreateOperationTransactionLinks(db *gorm.DB, links []*
 	panic("unexpected call")
 }
 func (r *serviceTestRepo) ListOperations(userID uuid.UUID) ([]OperationRow, error) {
-	panic("unexpected call")
+	if r.listOperationsFn != nil {
+		return r.listOperationsFn(userID)
+	}
+	return []OperationRow{}, nil
 }
 func (r *serviceTestRepo) ListOperationsByDate(db *gorm.DB, userID uuid.UUID, date time.Time) ([]Operation, error) {
 	panic("unexpected call")

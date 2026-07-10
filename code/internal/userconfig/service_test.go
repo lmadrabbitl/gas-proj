@@ -292,3 +292,37 @@ func TestUpdateConfigNormalizesNilSellPnLCategoryIDs(t *testing.T) {
 		t.Fatalf("expected nil loss category to stay nil")
 	}
 }
+
+func TestUpdateConfigPersistsBonificationIncomeCategoryID(t *testing.T) {
+	userID := uuid.New()
+	repo := &repositoryStub{}
+	serv := NewService(repo)
+	categoryID := uuid.New()
+
+	config, err := serv.UpdateConfig(userID, UpdateConfigRequest{
+		Settings: &UpdateConfigValues{
+			Investments: &UpdateInvestmentsConfig{
+				Integration: &UpdateInvestmentIntegrationConfig{
+					WatchedCategoryIDs:           []uuid.UUID{},
+					BonificationIncomeCategoryID: &categoryID,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateConfig returned error: %v", err)
+	}
+
+	if config.Settings.Investments.Integration.BonificationIncomeCategoryID == nil || *config.Settings.Investments.Integration.BonificationIncomeCategoryID != categoryID {
+		t.Fatalf("expected updated config to persist bonification income category id")
+	}
+
+	stored, err := serv.GetConfig(userID)
+	if err != nil {
+		t.Fatalf("GetConfig returned error: %v", err)
+	}
+
+	if stored.Settings.Investments.Integration.BonificationIncomeCategoryID == nil || *stored.Settings.Investments.Integration.BonificationIncomeCategoryID != categoryID {
+		t.Fatalf("expected stored config to keep bonification income category id")
+	}
+}

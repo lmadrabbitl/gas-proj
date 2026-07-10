@@ -1,0 +1,9 @@
+{
+  "user_id": "00000000-0000-0000-0000-000000000000",
+  "brokerage_account_code": "clear",
+  "statement_file": "/path/to/brokerage.xlsx",
+  "statement_sheet": "",
+  "date_tolerance_days": 5,
+  "amount_tolerance_cents": 1,
+  "include_hidden": true
+}

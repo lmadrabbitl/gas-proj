@@ -93,4 +93,13 @@ describe('TransactionsService', () => {
     });
     req.flush({ updated_count: 2 });
   });
+
+  it('sends bulk transaction deletes to the dedicated endpoint', () => {
+    service.deleteMany(['tx-1', 'tx-2']).subscribe();
+
+    const req = http.expectOne('/api/transactions/bulk-delete');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ ids: ['tx-1', 'tx-2'] });
+    req.flush({});
+  });
 });

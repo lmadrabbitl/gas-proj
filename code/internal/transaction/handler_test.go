@@ -21,6 +21,7 @@ type handlerServiceStub struct {
 	updateFn     func(userID uuid.UUID, transactionID uuid.UUID, req UpdateTransactionRequest) (*TransactionResponseItem, error)
 	bulkUpdateFn func(userID uuid.UUID, transactionIDs []uuid.UUID, req UpdateTransactionRequest) (int, error)
 	deleteFn     func(userID uuid.UUID, transactionID uuid.UUID) error
+	bulkDeleteFn func(userID uuid.UUID, transactionIDs []uuid.UUID) error
 }
 
 type handlerConfigServiceStub struct{}
@@ -51,6 +52,10 @@ func (s *handlerServiceStub) UpdateTransactionsBulk(userID uuid.UUID, transactio
 
 func (s *handlerServiceStub) DeleteTransaction(userID uuid.UUID, transactionID uuid.UUID) error {
 	return s.deleteFn(userID, transactionID)
+}
+
+func (s *handlerServiceStub) DeleteTransactionsBulk(userID uuid.UUID, transactionIDs []uuid.UUID) error {
+	return s.bulkDeleteFn(userID, transactionIDs)
 }
 
 func TestParseDescriptionQueryTermsSplitsByWhitespaceAndComma(t *testing.T) {
@@ -426,6 +431,56 @@ func TestDeleteTransactionReturnsNoContent(t *testing.T) {
 
 	handler.DeleteTransaction(context)
 
+	if context.Writer.Status() != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d", context.Writer.Status())
+	}
+}
+
+func TestDeleteTransactionsBulkForwardsPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := uuid.New()
+	expectedIDs := []uuid.UUID{
+		uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+	}
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/transactions/bulk-delete", strings.NewReader(`{"ids":["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"]}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	context.Set("userID", userID)
+
+	called := false
+	handler := NewHandler(&handlerServiceStub{
+		addFn: func(userID uuid.UUID, req CreateTransactionRequest) ([]*TransactionResponseItem, error) {
+			return nil, nil
+		},
+		listFn: func(userID uuid.UUID, filter FilterTransactionRequest) (*TransactionResponse, error) { return nil, nil },
+		getFn:  func(userID uuid.UUID, transactionID uuid.UUID) (*TransactionResponseItem, error) { return nil, nil },
+		updateFn: func(userID uuid.UUID, transactionID uuid.UUID, req UpdateTransactionRequest) (*TransactionResponseItem, error) {
+			return nil, nil
+		},
+		bulkUpdateFn: func(userID uuid.UUID, transactionIDs []uuid.UUID, req UpdateTransactionRequest) (int, error) {
+			return 0, nil
+		},
+		deleteFn: func(userID uuid.UUID, transactionID uuid.UUID) error { return nil },
+		bulkDeleteFn: func(gotUserID uuid.UUID, transactionIDs []uuid.UUID) error {
+			called = true
+			if gotUserID != userID {
+				t.Fatalf("expected user ID %s, got %s", userID, gotUserID)
+			}
+			if !reflect.DeepEqual(transactionIDs, expectedIDs) {
+				t.Fatalf("unexpected ids: %v", transactionIDs)
+			}
+			return nil
+		},
+	}, handlerConfigServiceStub{})
+
+	handler.DeleteTransactionsBulk(context)
+
+	if !called {
+		t.Fatal("expected bulk delete service to be called")
+	}
 	if context.Writer.Status() != http.StatusNoContent {
 		t.Fatalf("expected status 204, got %d", context.Writer.Status())
 	}

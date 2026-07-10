@@ -9,7 +9,7 @@ import { ReferenceDataService } from '../../data/reference-data.service';
 import { TransactionsService } from '../../data/transactions.service';
 import { UserConfigService } from '../../data/user-config.service';
 import { getApiErrorMessage } from '../../shared/api-error';
-import { uiMessages, deleteTransactionConfirmationMessage } from '../../shared/messages';
+import { uiMessages, deleteBulkTransactionsConfirmationMessage, deleteTransactionConfirmationMessage } from '../../shared/messages';
 import { brazilianDateToQuery, centsToDecimal, dateInputToIso, decimalToCents, toBrazilianDate, toBrazilianDateInputValue } from '../../shared/money';
 import { MoneyVisibilityService } from '../../shared/money-visibility.service';
 import { Account, BulkTransactionUpdatePayload, Category, Pagination, Transaction, TransactionPayload, TransactionUpdatePayload } from '../../shared/models';
@@ -204,6 +204,15 @@ const TRANSACTION_OPERATION_OPTIONS = [
               </button>
               <span class="bulk-actions-count">{{ selectedCountLabel() }}</span>
             </div>
+            <button
+              class="ghost-button bulk-icon-button"
+              type="button"
+              [title]="messages.actions.removeSelected"
+              [attr.aria-label]="messages.actions.removeSelected"
+              (click)="deleteSelected()"
+            >
+              <lucide-icon [img]="deleteRowIcon" [size]="18" [strokeWidth]="1.9" aria-hidden="true" />
+            </button>
             <button
               class="primary-button bulk-icon-button"
               type="button"
@@ -1152,6 +1161,32 @@ export class TransactionsComponent implements OnInit {
     this.error.set('');
     this.transactionsService.delete(tx.id).subscribe({
       next: () => {
+        this.referenceData.reload().subscribe({
+          error: (error) => this.toast.error(getApiErrorMessage(error)),
+        });
+        this.loadTransactions();
+      },
+      error: (error) => this.toast.error(getApiErrorMessage(error)),
+    });
+  }
+
+  deleteSelected(): void {
+    const selected = this.selectedTransactions();
+    if (selected.length === 0) {
+      return;
+    }
+    if (selected.some((tx) => this.isInvestmentMirror(tx))) {
+      this.toast.error(this.messages.actions.deleteBlockedMirror);
+      return;
+    }
+    if (!window.confirm(deleteBulkTransactionsConfirmationMessage(selected.length))) {
+      return;
+    }
+
+    this.error.set('');
+    this.transactionsService.deleteMany(selected.map((tx) => tx.id)).subscribe({
+      next: () => {
+        this.clearSelection();
         this.referenceData.reload().subscribe({
           error: (error) => this.toast.error(getApiErrorMessage(error)),
         });

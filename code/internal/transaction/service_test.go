@@ -638,3 +638,131 @@ func TestEnsureMirrorTransactionUpdateAllowedAllowsUnprotectedNoop(t *testing.T)
 		t.Fatalf("expected noop linked mirror update check to pass, got %v", err)
 	}
 }
+
+func TestDeleteTransactionsBulkDeletesTransferPairOnceAndUpdatesBalances(t *testing.T) {
+	userID := uuid.New()
+	firstID := uuid.New()
+	secondID := uuid.New()
+	transferID := int64(22)
+	accountA := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	accountB := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	deleted := []uuid.UUID{}
+	updatedBalances := []string{}
+
+	service := &transactionService{
+		repo: &transactionRepoStub{
+			getDTOByIDFn: func(db *gorm.DB, gotUserID, transactionID uuid.UUID) (*TransactionResponseItem, error) {
+				if gotUserID != userID {
+					t.Fatalf("unexpected user ID: %s", gotUserID)
+				}
+				return &TransactionResponseItem{ID: transactionID, IsInvestmentMirror: false}, nil
+			},
+			getByIDFn: func(db *gorm.DB, gotUserID, transactionID uuid.UUID) (*Transaction, error) {
+				if gotUserID != userID {
+					t.Fatalf("unexpected user ID: %s", gotUserID)
+				}
+				switch transactionID {
+				case firstID:
+					return &Transaction{ID: firstID, UserID: gotUserID, AccountID: accountA, TransferID: &transferID, TransferAccountID: uuidPtr(accountB)}, nil
+				case secondID:
+					return &Transaction{ID: secondID, UserID: gotUserID, AccountID: accountB, TransferID: &transferID, TransferAccountID: uuidPtr(accountA)}, nil
+				default:
+					t.Fatalf("unexpected transaction ID %s", transactionID)
+					return nil, nil
+				}
+			},
+			getByTransferIDFn: func(db *gorm.DB, gotUserID uuid.UUID, gotTransferID int64) ([]Transaction, error) {
+				if gotUserID != userID || gotTransferID != transferID {
+					t.Fatalf("unexpected transfer lookup: %s %d", gotUserID, gotTransferID)
+				}
+				return []Transaction{
+					{ID: firstID, UserID: gotUserID, AccountID: accountA, TransferID: &transferID, TransferAccountID: uuidPtr(accountB)},
+					{ID: secondID, UserID: gotUserID, AccountID: accountB, TransferID: &transferID, TransferAccountID: uuidPtr(accountA)},
+				}, nil
+			},
+			deleteFn: func(db *gorm.DB, gotUserID, transactionID uuid.UUID) error {
+				if gotUserID != userID {
+					t.Fatalf("unexpected user ID: %s", gotUserID)
+				}
+				deleted = append(deleted, transactionID)
+				return nil
+			},
+			calculateAccountBalanceFn: func(db *gorm.DB, gotUserID uuid.UUID, accCode string) (int64, error) {
+				if gotUserID != userID {
+					t.Fatalf("unexpected user ID: %s", gotUserID)
+				}
+				return 0, nil
+			},
+		},
+		accService: &transactionAccountServiceStub{
+			getAccountByCodeFn:  func(userID uuid.UUID, code string) (*account.Account, error) { return nil, nil },
+			getAccountsByCodeFn: func(userID uuid.UUID, codes []string) ([]account.Account, error) { return nil, nil },
+			getAccountsByIDFn: func(gotUserID uuid.UUID, ids []uuid.UUID) ([]account.Account, error) {
+				if gotUserID != userID {
+					t.Fatalf("unexpected user ID: %s", gotUserID)
+				}
+				return []account.Account{
+					{ID: accountA, Code: "cash"},
+					{ID: accountB, Code: "broker"},
+				}, nil
+			},
+			updateBalanceFn: func(db *gorm.DB, gotUserID uuid.UUID, code string, newBalance int64) error {
+				if gotUserID != userID {
+					t.Fatalf("unexpected user ID: %s", gotUserID)
+				}
+				updatedBalances = append(updatedBalances, code)
+				return nil
+			},
+		},
+	}
+
+	if err := service.DeleteTransactionsBulk(userID, []uuid.UUID{firstID, secondID}); err != nil {
+		t.Fatalf("expected bulk delete to succeed, got %v", err)
+	}
+
+	if len(deleted) != 2 {
+		t.Fatalf("expected 2 deleted rows, got %v", deleted)
+	}
+	if !containsUUID(deleted, firstID) || !containsUUID(deleted, secondID) {
+		t.Fatalf("unexpected deleted rows: %v", deleted)
+	}
+	if len(updatedBalances) != 2 {
+		t.Fatalf("expected 2 balance updates, got %v", updatedBalances)
+	}
+}
+
+func TestDeleteTransactionsBulkRejectsInvestmentMirror(t *testing.T) {
+	userID := uuid.New()
+	transactionID := uuid.New()
+
+	service := &transactionService{
+		repo: &transactionRepoStub{
+			getDTOByIDFn: func(db *gorm.DB, gotUserID, gotTransactionID uuid.UUID) (*TransactionResponseItem, error) {
+				if gotUserID != userID || gotTransactionID != transactionID {
+					t.Fatalf("unexpected args: %s %s", gotUserID, gotTransactionID)
+				}
+				return &TransactionResponseItem{
+					ID:                 transactionID,
+					IsInvestmentMirror: true,
+				}, nil
+			},
+		},
+	}
+
+	if err := service.DeleteTransactionsBulk(userID, []uuid.UUID{transactionID}); err == nil {
+		t.Fatal("expected linked mirror bulk delete to be rejected")
+	}
+}
+
+func uuidPtr(id uuid.UUID) *uuid.UUID {
+	return &id
+}
+
+func containsUUID(values []uuid.UUID, target uuid.UUID) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}

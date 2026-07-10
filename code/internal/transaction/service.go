@@ -20,6 +20,7 @@ type Service interface {
 	UpdateTransaction(userID uuid.UUID, transactionID uuid.UUID, req UpdateTransactionRequest) (*TransactionResponseItem, error)
 	UpdateTransactionsBulk(userID uuid.UUID, transactionIDs []uuid.UUID, req UpdateTransactionRequest) (int, error)
 	DeleteTransaction(userID uuid.UUID, transactionID uuid.UUID) error
+	DeleteTransactionsBulk(userID uuid.UUID, transactionIDs []uuid.UUID) error
 }
 
 type AccountService interface {
@@ -753,6 +754,75 @@ func (serv *transactionService) DeleteTransaction(userID uuid.UUID, transactionI
 	}
 
 	accCodeList, err := serv.getAccountCodesFromIds(userID, accIDList)
+	if err != nil {
+		return err
+	}
+
+	if err := serv.updateAllAccountBalances(dbTransaction, userID, accCodeList); err != nil {
+		return err
+	}
+
+	shouldCommit = true
+	return nil
+}
+
+func (serv *transactionService) DeleteTransactionsBulk(userID uuid.UUID, transactionIDs []uuid.UUID) error {
+	uniqueIDs := uniqueTransactionIDs(transactionIDs)
+	if len(uniqueIDs) == 0 {
+		return errors.ErrInvalidInputWithMessage("at least one transaction id is required", nil)
+	}
+
+	dbTransaction := serv.beginDBTransaction()
+	shouldCommit := false
+	deleteIDSet := map[uuid.UUID]struct{}{}
+	accountSet := map[uuid.UUID]struct{}{}
+	defer func() {
+		if dbTransaction == nil {
+			return
+		}
+		if !shouldCommit {
+			dbTransaction.Rollback()
+		} else if err := dbTransaction.Commit().Error; err != nil {
+			err = fmt.Errorf("commit failed: %w", err)
+		}
+	}()
+
+	for _, transactionID := range uniqueIDs {
+		dto, err := serv.repo.GetDTOByID(dbTransaction, userID, transactionID)
+		if err != nil {
+			return err
+		}
+		if dto.IsInvestmentMirror {
+			return errors.ErrInvalidInputWithCode("transaction.linked_investment_operation.read_only", "linked mirrored transactions cannot be deleted directly", nil)
+		}
+
+		transactionPair, err := serv.getTransactionPairWithDB(dbTransaction, userID, transactionID)
+		if err != nil {
+			return err
+		}
+
+		accountSet[transactionPair.t1.AccountID] = struct{}{}
+		if transactionPair.t1.TransferAccountID != nil {
+			accountSet[*transactionPair.t1.TransferAccountID] = struct{}{}
+		}
+		deleteIDSet[transactionPair.t1.ID] = struct{}{}
+
+		if transactionPair.isTransfer {
+			accountSet[transactionPair.t2.AccountID] = struct{}{}
+			if transactionPair.t2.TransferAccountID != nil {
+				accountSet[*transactionPair.t2.TransferAccountID] = struct{}{}
+			}
+			deleteIDSet[transactionPair.t2.ID] = struct{}{}
+		}
+	}
+
+	for deleteID := range deleteIDSet {
+		if err := serv.repo.Delete(dbTransaction, userID, deleteID); err != nil {
+			return err
+		}
+	}
+
+	accCodeList, err := serv.getAccountCodesFromIds(userID, mapKeysUUID(accountSet))
 	if err != nil {
 		return err
 	}

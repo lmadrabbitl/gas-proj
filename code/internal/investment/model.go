@@ -20,6 +20,7 @@ const (
 	OperationTypeBuy          OperationType = "BUY"
 	OperationTypeSell         OperationType = "SELL"
 	OperationTypeBonification OperationType = "BONIFICATION"
+	OperationTypeAmortization OperationType = "AMORTIZATION"
 )
 
 type OperationTransactionLinkRole string
@@ -28,6 +29,7 @@ const (
 	OperationTransactionLinkRoleVisibleTransfer OperationTransactionLinkRole = "VISIBLE_TRANSFER"
 	OperationTransactionLinkRoleHiddenTransfer  OperationTransactionLinkRole = "HIDDEN_TRANSFER"
 	OperationTransactionLinkRoleRealizedPNL     OperationTransactionLinkRole = "REALIZED_PNL"
+	OperationTransactionLinkRoleBonificationIncome OperationTransactionLinkRole = "BONIFICATION_INCOME"
 )
 
 type Asset struct {

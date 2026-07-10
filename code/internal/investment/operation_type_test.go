@@ -18,12 +18,37 @@ func TestCheckOperationTypeAllowsBonification(t *testing.T) {
 	}
 }
 
+func TestCheckOperationTypeAllowsAmortization(t *testing.T) {
+	t.Parallel()
+
+	if err := CheckOperationType(OperationTypeAmortization); err != nil {
+		t.Fatalf("expected amortization to be valid, got %v", err)
+	}
+}
+
+func TestCheckOperationFeeAmountRejectsAmortizationFee(t *testing.T) {
+	t.Parallel()
+
+	if err := CheckOperationFeeAmount(OperationTypeAmortization, 1); err == nil {
+		t.Fatal("expected amortization fee validation to fail")
+	}
+}
+
 func TestComputeNetAmountUsesBonificationCostBasis(t *testing.T) {
 	t.Parallel()
 
 	got := computeNetAmount(OperationTypeBonification, 1_000, 25)
 	if got != 1_025 {
 		t.Fatalf("expected bonification net amount 1025, got %d", got)
+	}
+}
+
+func TestComputeNetAmountUsesAmortizationGrossAmount(t *testing.T) {
+	t.Parallel()
+
+	got := computeNetAmount(OperationTypeAmortization, 1_000, 25)
+	if got != 1_000 {
+		t.Fatalf("expected amortization net amount 1000, got %d", got)
 	}
 }
 
@@ -70,6 +95,49 @@ func TestRebuildPositionAppliesBonificationToQuantityAndAveragePrice(t *testing.
 	}
 	if saved.RealizedPNL != 0 {
 		t.Fatalf("expected realized pnl 0, got %d", saved.RealizedPNL)
+	}
+}
+
+func TestRebuildPositionAppliesAmortizationToCostBasisWithoutChangingQuantity(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	assetID := uuid.New()
+	var saved *Position
+	repo := &serviceTestRepo{
+		listAssetOperationsFn: func(userIDArg, assetIDArg uuid.UUID) ([]Operation, error) {
+			if userIDArg != userID {
+				t.Fatalf("expected userID %s, got %s", userID, userIDArg)
+			}
+			if assetIDArg != assetID {
+				t.Fatalf("expected assetID %s, got %s", assetID, assetIDArg)
+			}
+			return []Operation{
+				{OperationType: OperationTypeBuy, Quantity: 10, NetAmount: 1_000},
+				{OperationType: OperationTypeAmortization, Quantity: 10, NetAmount: 250},
+			}, nil
+		},
+		upsertPositionFn: func(position *Position) error {
+			saved = position
+			return nil
+		},
+	}
+	svc := &service{repo: repo}
+
+	if err := svc.rebuildPosition(nil, userID, assetID); err != nil {
+		t.Fatalf("rebuildPosition returned error: %v", err)
+	}
+	if saved == nil {
+		t.Fatal("expected position to be saved")
+	}
+	if saved.CurrentQuantity != 10 {
+		t.Fatalf("expected quantity 10, got %d", saved.CurrentQuantity)
+	}
+	if saved.TotalCostBasis != 750 {
+		t.Fatalf("expected total cost basis 750, got %d", saved.TotalCostBasis)
+	}
+	if saved.AveragePrice != 75 {
+		t.Fatalf("expected average price 75, got %d", saved.AveragePrice)
 	}
 }
 
@@ -354,6 +422,89 @@ func TestBuildMirrorCashMovementSummaryForFinalSellConsumesRemainingCostBasis(t 
 	}
 }
 
+func TestBuildMirrorCashMovementSummaryForSellIncludesBonificationCostBasis(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	assetID := uuid.New()
+	investmentID := uuid.New()
+	sellID := uuid.New()
+	date := time.Date(2022, time.January, 25, 0, 0, 0, 0, time.UTC)
+
+	repo := &serviceTestRepo{
+		listAssetOperationsFn: func(callUserID, callAssetID uuid.UUID) ([]Operation, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			if callAssetID != assetID {
+				t.Fatalf("expected assetID %s, got %s", assetID, callAssetID)
+			}
+			return []Operation{
+				{ID: uuid.New(), AssetID: assetID, InvestmentAccountID: &investmentID, OperationType: OperationTypeBuy, Date: time.Date(2021, time.January, 7, 0, 0, 0, 0, time.UTC), Quantity: 25, NetAmount: 69_071},
+				{ID: uuid.New(), AssetID: assetID, InvestmentAccountID: &investmentID, OperationType: OperationTypeBonification, Date: time.Date(2021, time.April, 23, 0, 0, 0, 0, time.UTC), Quantity: 2, NetAmount: 906},
+				{ID: sellID, AssetID: assetID, InvestmentAccountID: &investmentID, OperationType: OperationTypeSell, Date: date, Quantity: 27, NetAmount: 57_977},
+			}, nil
+		},
+	}
+	svc := &service{repo: repo}
+
+	summary, err := svc.buildMirrorCashMovementSummary(nil, userID, []Operation{
+		{ID: sellID, AssetID: assetID, InvestmentAccountID: &investmentID, OperationType: OperationTypeSell, Date: date, Quantity: 27, NetAmount: 57_977},
+	}, "BBDC4")
+	if err != nil {
+		t.Fatalf("buildMirrorCashMovementSummary returned error: %v", err)
+	}
+
+	if summary.ReleasedCostBasis != 69_977 {
+		t.Fatalf("expected released cost basis 69977, got %d", summary.ReleasedCostBasis)
+	}
+	if summary.RealizedPNL != -12_000 {
+		t.Fatalf("expected realized pnl -12000, got %d", summary.RealizedPNL)
+	}
+}
+
+func TestBuildMirrorCashMovementSummaryForSellScopesByInvestmentAccount(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	assetID := uuid.New()
+	firstInvestmentID := uuid.New()
+	secondInvestmentID := uuid.New()
+	sellID := uuid.New()
+	date := time.Date(2026, time.July, 4, 0, 0, 0, 0, time.UTC)
+
+	repo := &serviceTestRepo{
+		listAssetOperationsFn: func(callUserID, callAssetID uuid.UUID) ([]Operation, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			if callAssetID != assetID {
+				t.Fatalf("expected assetID %s, got %s", assetID, callAssetID)
+			}
+			return []Operation{
+				{ID: uuid.New(), AssetID: assetID, InvestmentAccountID: &firstInvestmentID, OperationType: OperationTypeBuy, Date: date.AddDate(0, -2, 0), Quantity: 10, NetAmount: 1_000},
+				{ID: uuid.New(), AssetID: assetID, InvestmentAccountID: &secondInvestmentID, OperationType: OperationTypeBuy, Date: date.AddDate(0, -1, 0), Quantity: 10, NetAmount: 2_000},
+				{ID: sellID, AssetID: assetID, InvestmentAccountID: &secondInvestmentID, OperationType: OperationTypeSell, Date: date, Quantity: 10, NetAmount: 1_500},
+			}, nil
+		},
+	}
+	svc := &service{repo: repo}
+
+	summary, err := svc.buildMirrorCashMovementSummary(nil, userID, []Operation{
+		{ID: sellID, AssetID: assetID, InvestmentAccountID: &secondInvestmentID, OperationType: OperationTypeSell, Date: date, Quantity: 10, NetAmount: 1_500},
+	}, "ITSA4")
+	if err != nil {
+		t.Fatalf("buildMirrorCashMovementSummary returned error: %v", err)
+	}
+
+	if summary.ReleasedCostBasis != 2_000 {
+		t.Fatalf("expected released cost basis 2000 from matching investment account, got %d", summary.ReleasedCostBasis)
+	}
+	if summary.RealizedPNL != -500 {
+		t.Fatalf("expected realized pnl -500, got %d", summary.RealizedPNL)
+	}
+}
+
 func TestPreviewImportOperationsReturnsProjectedPositionRowForBuy(t *testing.T) {
 	t.Parallel()
 
@@ -436,6 +587,12 @@ func TestPreviewImportOperationsReplaysHistoryForBackdatedBuyBeforeLaterSell(t *
 				t.Fatalf("expected userID %s, got %s", userID, callUserID)
 			}
 			return asset, nil
+		},
+		listOperationsFn: func(callUserID uuid.UUID) ([]OperationRow, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			return []OperationRow{}, nil
 		},
 		listAssetOperationsFn: func(callUserID, callAssetID uuid.UUID) ([]Operation, error) {
 			if callUserID != userID {
@@ -602,5 +759,242 @@ func TestPreviewImportOperationsAllowsSameDayDayTradeWhenBuysOffsetSell(t *testi
 	row := preview.PositionPreviewRows[0]
 	if row.ProjectedQuantity != 9 {
 		t.Fatalf("expected projected quantity 9, got %d", row.ProjectedQuantity)
+	}
+}
+
+func TestPreviewImportOperationsReturnsMirrorPreviewRowsForBonificationFlow(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	assetID := uuid.New()
+	asset := &Asset{ID: assetID, Code: "BBDC4", Name: "Banco Bradesco", AssetType: AssetTypeStock}
+	repo := &serviceTestRepo{
+		getAssetByCodeFn: func(callUserID uuid.UUID, code string) (*Asset, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			if code != "BBDC4" {
+				t.Fatalf("expected asset code BBDC4, got %s", code)
+			}
+			return asset, nil
+		},
+		listOperationsFn: func(callUserID uuid.UUID) ([]OperationRow, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			return []OperationRow{}, nil
+		},
+		listAssetOperationsFn: func(callUserID, callAssetID uuid.UUID) ([]Operation, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			if callAssetID != assetID {
+				t.Fatalf("expected assetID %s, got %s", assetID, callAssetID)
+			}
+			return []Operation{}, nil
+		},
+	}
+	svc := &service{repo: repo}
+
+	preview, err := svc.PreviewImportOperations(userID, ImportOperationsRequest{
+		Operations: []ImportOperationRequest{
+			{
+				ClientRowID:           "row-1",
+				AssetCode:             "BBDC4",
+				BrokerageAccountCode:  "clear",
+				InvestmentAccountCode: "invacoes",
+				OperationType:         OperationTypeBuy,
+				Date:                  time.Date(2021, time.January, 7, 0, 0, 0, 0, time.UTC),
+				Quantity:              25,
+				UnitPrice:             2_762,
+				TotalFeeAmount:        21,
+			},
+			{
+				ClientRowID:           "row-2",
+				AssetCode:             "BBDC4",
+				BrokerageAccountCode:  "clear",
+				InvestmentAccountCode: "invacoes",
+				OperationType:         OperationTypeBonification,
+				Date:                  time.Date(2021, time.April, 23, 0, 0, 0, 0, time.UTC),
+				Quantity:              2,
+				UnitPrice:             453,
+				TotalFeeAmount:        0,
+			},
+			{
+				ClientRowID:           "row-3",
+				AssetCode:             "BBDC4",
+				BrokerageAccountCode:  "clear",
+				InvestmentAccountCode: "invacoes",
+				OperationType:         OperationTypeSell,
+				Date:                  time.Date(2022, time.January, 25, 0, 0, 0, 0, time.UTC),
+				Quantity:              27,
+				UnitPrice:             2_148,
+				TotalFeeAmount:        19,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PreviewImportOperations returned error: %v", err)
+	}
+
+	if len(preview.MirrorPreviewRows) != 3 {
+		t.Fatalf("expected 3 mirror preview rows, got %d", len(preview.MirrorPreviewRows))
+	}
+
+	buyRow := preview.MirrorPreviewRows[0]
+	if buyRow.ClientRowID != "row-1" || buyRow.OperationType != OperationTypeBuy {
+		t.Fatalf("unexpected buy mirror row: %+v", buyRow)
+	}
+	if buyRow.Description != "COMPRA DE 25 BBDC4" {
+		t.Fatalf("expected buy description, got %q", buyRow.Description)
+	}
+	if buyRow.TransferAmount != 69_071 || buyRow.ExtraAmount != 0 || buyRow.ExtraType != MirrorPreviewExtraTypeNone {
+		t.Fatalf("unexpected buy mirror amounts: %+v", buyRow)
+	}
+
+	bonificationRow := preview.MirrorPreviewRows[1]
+	if bonificationRow.ClientRowID != "row-2" || bonificationRow.OperationType != OperationTypeBonification {
+		t.Fatalf("unexpected bonification mirror row: %+v", bonificationRow)
+	}
+	if bonificationRow.Description != "BONIFICAÇÃO DE 2 BBDC4" {
+		t.Fatalf("expected bonification description, got %q", bonificationRow.Description)
+	}
+	if bonificationRow.TransferAmount != 906 || bonificationRow.ExtraAmount != 906 || bonificationRow.ExtraType != MirrorPreviewExtraTypeBonificationIncome {
+		t.Fatalf("unexpected bonification mirror amounts: %+v", bonificationRow)
+	}
+
+	sellRow := preview.MirrorPreviewRows[2]
+	if sellRow.ClientRowID != "row-3" || sellRow.OperationType != OperationTypeSell {
+		t.Fatalf("unexpected sell mirror row: %+v", sellRow)
+	}
+	if sellRow.Description != "VENDA DE 27 BBDC4" {
+		t.Fatalf("expected sell description, got %q", sellRow.Description)
+	}
+	if sellRow.TransferAmount != 69_977 || sellRow.ExtraAmount != -12_000 || sellRow.ExtraType != MirrorPreviewExtraTypeRealizedPNL {
+		t.Fatalf("unexpected sell mirror amounts: %+v", sellRow)
+	}
+	if sellRow.SourceAccountCode != "invacoes" || sellRow.DestinationAccountCode != "clear" {
+		t.Fatalf("unexpected sell accounts source=%q destination=%q", sellRow.SourceAccountCode, sellRow.DestinationAccountCode)
+	}
+}
+
+func TestPreviewImportOperationsSkipsMirrorPreviewValidationWhenMirroringDisabled(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	assetID := uuid.New()
+	asset := &Asset{ID: assetID, Code: "ITUB3", Name: "Banco Itau Unibanco", AssetType: AssetTypeStock}
+	otherAsset := &Asset{ID: uuid.New(), Code: "ITUB4", Name: "Banco Itau Unibanco PN", AssetType: AssetTypeStock}
+	repo := &serviceTestRepo{
+		getAssetByCodeFn: func(callUserID uuid.UUID, code string) (*Asset, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			switch code {
+			case "ITUB3":
+				return asset, nil
+			case "ITUB4":
+				return otherAsset, nil
+			default:
+				t.Fatalf("unexpected asset code %s", code)
+				return nil, nil
+			}
+		},
+		listOperationsFn: func(callUserID uuid.UUID) ([]OperationRow, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			accountCode := "invacoes"
+			return []OperationRow{
+				{AssetCode: "ITUB3", InvestmentAccountCode: &accountCode, OperationType: OperationTypeBuy, Date: time.Date(2022, time.January, 25, 0, 0, 0, 0, time.UTC), Quantity: 20, NetAmount: 41092},
+				{AssetCode: "ITUB3", InvestmentAccountCode: &accountCode, OperationType: OperationTypeBonification, Date: time.Date(2025, time.March, 20, 0, 0, 0, 0, time.UTC), Quantity: 2, NetAmount: 6800},
+				{AssetCode: "ITUB3", InvestmentAccountCode: &accountCode, OperationType: OperationTypeBuy, Date: time.Date(2025, time.October, 27, 0, 0, 0, 0, time.UTC), Quantity: 26, NetAmount: 88947},
+				{AssetCode: "ITUB3", InvestmentAccountCode: &accountCode, OperationType: OperationTypeBonification, Date: time.Date(2025, time.December, 31, 0, 0, 0, 0, time.UTC), Quantity: 1, NetAmount: 4000},
+			}, nil
+		},
+		listAssetOperationsFn: func(callUserID, callAssetID uuid.UUID) ([]Operation, error) {
+			if callUserID != userID {
+				t.Fatalf("expected userID %s, got %s", userID, callUserID)
+			}
+			if callAssetID == otherAsset.ID {
+				return []Operation{}, nil
+			}
+			if callAssetID != assetID {
+				t.Fatalf("expected assetID %s, got %s", assetID, callAssetID)
+			}
+			investmentAccountID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+			return []Operation{
+				{
+					AssetID:             assetID,
+					InvestmentAccountID: &investmentAccountID,
+					OperationType:       OperationTypeBuy,
+					Date:                time.Date(2022, time.January, 25, 0, 0, 0, 0, time.UTC),
+					Quantity:            20,
+					NetAmount:           41092,
+				},
+				{
+					AssetID:             assetID,
+					InvestmentAccountID: &investmentAccountID,
+					OperationType:       OperationTypeBonification,
+					Date:                time.Date(2025, time.March, 20, 0, 0, 0, 0, time.UTC),
+					Quantity:            2,
+					NetAmount:           6800,
+				},
+				{
+					AssetID:             assetID,
+					InvestmentAccountID: &investmentAccountID,
+					OperationType:       OperationTypeBuy,
+					Date:                time.Date(2025, time.October, 27, 0, 0, 0, 0, time.UTC),
+					Quantity:            26,
+					NetAmount:           88947,
+				},
+				{
+					AssetID:             assetID,
+					InvestmentAccountID: &investmentAccountID,
+					OperationType:       OperationTypeBonification,
+					Date:                time.Date(2025, time.December, 31, 0, 0, 0, 0, time.UTC),
+					Quantity:            1,
+					NetAmount:           4000,
+				},
+			}, nil
+		},
+	}
+	svc := &service{repo: repo}
+
+	preview, err := svc.PreviewImportOperations(userID, ImportOperationsRequest{
+		CreateMirroredTransactions: false,
+		Operations: []ImportOperationRequest{
+			{
+				ClientRowID:           "row-11",
+				AssetCode:             "ITUB3",
+				BrokerageAccountCode:  "clear",
+				InvestmentAccountCode: "invacoes",
+				OperationType:         OperationTypeSell,
+				Date:                  time.Date(2026, time.June, 29, 0, 0, 0, 0, time.UTC),
+				Quantity:              49,
+				UnitPrice:             4430,
+				TotalFeeAmount:        140,
+			},
+			{
+				ClientRowID:           "row-12",
+				AssetCode:             "ITUB4",
+				BrokerageAccountCode:  "clear",
+				InvestmentAccountCode: "invacoes",
+				OperationType:         OperationTypeBuy,
+				Date:                  time.Date(2026, time.June, 29, 0, 0, 0, 0, time.UTC),
+				Quantity:              60,
+				UnitPrice:             4233,
+				TotalFeeAmount:        140,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PreviewImportOperations returned error: %v", err)
+	}
+	if len(preview.MirrorPreviewRows) != 2 {
+		t.Fatalf("expected 2 mirror preview rows, got %d", len(preview.MirrorPreviewRows))
+	}
+	if len(preview.PositionPreviewRows) != 2 {
+		t.Fatalf("expected 2 position preview rows, got %d", len(preview.PositionPreviewRows))
 	}
 }

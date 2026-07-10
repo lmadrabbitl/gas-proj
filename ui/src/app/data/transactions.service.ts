@@ -59,6 +59,10 @@ export class TransactionsService {
     return this.http.delete<void>(`/api/transactions/${id}`);
   }
 
+  deleteMany(ids: string[]) {
+    return this.http.post<void>('/api/transactions/bulk-delete', { ids });
+  }
+
   private serializeDescriptionFilter(value: unknown): string {
     if (typeof value !== 'string') {
       return '';

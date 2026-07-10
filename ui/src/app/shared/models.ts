@@ -53,6 +53,7 @@ export interface InvestmentIntegrationConfig {
   watched_category_ids: string[];
   sell_gain_category_id?: string | null;
   sell_loss_category_id?: string | null;
+  bonification_income_category_id?: string | null;
 }
 
 export interface UIConfig {
@@ -77,7 +78,7 @@ export type AccountType = 'ASSET' | 'LIABILITY';
 export type AccountAssetRole = 'NORMAL' | 'BROKERAGE' | 'INVESTMENT';
 export type CategoryType = 'INCOME' | 'EXPENSE' | 'MOVEMENT';
 export type InvestmentAssetType = 'STOCK' | 'FII' | 'ETF';
-export type InvestmentOperationType = 'BUY' | 'SELL' | 'BONIFICATION';
+export type InvestmentOperationType = 'BUY' | 'SELL' | 'BONIFICATION' | 'AMORTIZATION';
 
 export interface Account {
   ID: string;
@@ -446,6 +447,24 @@ export interface ImportInvestmentOperationsResponse {
 
 export interface PreviewImportInvestmentOperationsResponse {
   position_preview_rows: InvestmentPositionPreviewRow[];
+  mirror_preview_rows?: InvestmentMirrorPreviewRow[];
+}
+
+export type InvestmentMirrorExtraType = 'NONE' | 'REALIZED_PNL' | 'BONIFICATION_INCOME';
+
+export interface InvestmentMirrorPreviewRow {
+  client_row_id: string;
+  group_key: string;
+  operation_type: InvestmentOperationType;
+  brokerage_account_code: string;
+  investment_account_code: string;
+  date: string;
+  description: string;
+  transfer_amount: number;
+  extra_amount: number;
+  extra_type: InvestmentMirrorExtraType;
+  source_account_code: string;
+  destination_account_code: string;
 }
 
 export interface UpdateInvestmentOperationPayload {
@@ -465,6 +484,7 @@ export interface CreateInvestmentOperationMirrorPayload {
   destination_account_code?: string;
   transaction_id?: string | null;
   realized_pnl_transaction_id?: string | null;
+  bonification_income_transaction_id?: string | null;
 }
 
 export interface CreateInvestmentOperationMirrorsBulkPayload {

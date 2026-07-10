@@ -29,6 +29,7 @@ const DEFAULT_INVESTMENT_INTEGRATION_CONFIG: InvestmentIntegrationConfig = {
   watched_category_ids: [],
   sell_gain_category_id: null,
   sell_loss_category_id: null,
+  bonification_income_category_id: null,
 };
 const DEFAULT_HIDE_AMOUNTS = false;
 
@@ -202,6 +203,7 @@ export class UserConfigService {
             watched_category_ids: [...config.watched_category_ids],
             sell_gain_category_id: config.sell_gain_category_id ?? null,
             sell_loss_category_id: config.sell_loss_category_id ?? null,
+            bonification_income_category_id: config.bonification_income_category_id ?? null,
           },
         },
       },
@@ -247,6 +249,9 @@ export class UserConfigService {
             sell_loss_category_id:
               config.settings?.investments?.integration?.sell_loss_category_id ??
               DEFAULT_INVESTMENT_INTEGRATION_CONFIG.sell_loss_category_id,
+            bonification_income_category_id:
+              config.settings?.investments?.integration?.bonification_income_category_id ??
+              DEFAULT_INVESTMENT_INTEGRATION_CONFIG.bonification_income_category_id,
           },
         },
         ui: {

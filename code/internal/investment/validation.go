@@ -54,11 +54,22 @@ func CheckPortfolioName(name string) error {
 
 func CheckOperationType(operationType OperationType) error {
 	switch operationType {
-	case OperationTypeBuy, OperationTypeSell, OperationTypeBonification:
+	case OperationTypeBuy, OperationTypeSell, OperationTypeBonification, OperationTypeAmortization:
 		return nil
 	default:
-		return errors.ErrInvalidInputWithMessage("operation type needs to be BUY, SELL or BONIFICATION", nil)
+		return errors.ErrInvalidInputWithMessage("operation type needs to be BUY, SELL, BONIFICATION or AMORTIZATION", nil)
 	}
+}
+
+func CheckOperationFeeAmount(operationType OperationType, feeAmount int64) error {
+	if operationType == OperationTypeAmortization && feeAmount != 0 {
+		return errors.ErrInvalidInputWithCode(
+			"validation.operation.fee.must.be.zero.for.amortization",
+			"amortization fee must be zero",
+			nil,
+		)
+	}
+	return nil
 }
 
 func CheckQuantity(quantity int64) error {

@@ -663,6 +663,29 @@ interface WatchedCategoryGroup {
           </label>
           <p class="field-hint">{{ messages.settings.sellLossCategoryHint }}</p>
           <label>
+            {{ messages.settings.bonificationIncomeCategoryLabel }}
+            <select
+              [ngModel]="pendingBonificationIncomeCategoryID() ?? ''"
+              (ngModelChange)="pendingBonificationIncomeCategoryID.set($event ? $event : null)"
+            >
+              <option value="">{{ messages.settings.bonificationIncomeCategoryPlaceholder }}</option>
+              @for (group of incomeLeafCategoryGroups(); track group.key) {
+                @if (group.label) {
+                  <optgroup [label]="group.label">
+                    @for (category of group.options; track category.ID) {
+                      <option [value]="category.ID">{{ category.Name }}</option>
+                    }
+                  </optgroup>
+                } @else {
+                  @for (category of group.options; track category.ID) {
+                    <option [value]="category.ID">{{ category.Name }}</option>
+                  }
+                }
+              }
+            </select>
+          </label>
+          <p class="field-hint">{{ messages.settings.bonificationIncomeCategoryHint }}</p>
+          <label>
             {{ messages.settings.strategyLabel }}
             <select [ngModel]="pendingSuggestionStrategy()" (ngModelChange)="pendingSuggestionStrategy.set($event)">
               <option value="BEST_NEXT_SHARE">{{ messages.settings.strategyBestNextShare }}</option>
@@ -1053,6 +1076,7 @@ export class InvestmentPortfoliosComponent implements OnInit {
   readonly pendingWatchedCategoryIDs = signal<string[]>([]);
   readonly pendingSellGainCategoryID = signal<string | null>(null);
   readonly pendingSellLossCategoryID = signal<string | null>(null);
+  readonly pendingBonificationIncomeCategoryID = signal<string | null>(null);
   readonly assetDrafts = signal<Record<string, PortfolioAssetDraft>>({});
   readonly assetSelections = signal<Record<string, boolean>>({});
   readonly assetSelectionOrder = signal<string[]>([]);
@@ -1260,6 +1284,7 @@ export class InvestmentPortfoliosComponent implements OnInit {
             watched_category_ids: this.pendingWatchedCategoryIDs(),
             sell_gain_category_id: this.pendingSellGainCategoryID(),
             sell_loss_category_id: this.pendingSellLossCategoryID(),
+            bonification_income_category_id: this.pendingBonificationIncomeCategoryID(),
           },
         },
       },
@@ -1273,6 +1298,7 @@ export class InvestmentPortfoliosComponent implements OnInit {
           watched_category_ids: this.pendingWatchedCategoryIDs(),
           sell_gain_category_id: this.pendingSellGainCategoryID(),
           sell_loss_category_id: this.pendingSellLossCategoryID(),
+          bonification_income_category_id: this.pendingBonificationIncomeCategoryID(),
         });
         this.closeSettings();
         this.loadSelectedAnalysis(this.selectedPortfolioCode());
@@ -2124,6 +2150,7 @@ export class InvestmentPortfoliosComponent implements OnInit {
     const integration = this.userConfigService.investmentIntegrationConfig();
     this.pendingSellGainCategoryID.set(integration.sell_gain_category_id ?? null);
     this.pendingSellLossCategoryID.set(integration.sell_loss_category_id ?? null);
+    this.pendingBonificationIncomeCategoryID.set(integration.bonification_income_category_id ?? null);
   }
 
   incomeLeafCategories(): Category[] {
