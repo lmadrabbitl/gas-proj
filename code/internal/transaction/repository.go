@@ -27,6 +27,8 @@ type Repository interface {
 	Delete(db *gorm.DB, userID, transactionID uuid.UUID) error
 	GetNextTransferID(db *gorm.DB) (int64, error)
 	CalculateAccountBalance(db *gorm.DB, userID uuid.UUID, accCode string) (int64, error)
+	UpsertTransactionNote(db *gorm.DB, userID, transactionID uuid.UUID, notes string) error
+	DeleteTransactionNote(db *gorm.DB, userID, transactionID uuid.UUID) error
 }
 
 type UpdateTransaction struct {
@@ -120,17 +122,15 @@ func (repo *repository) CreateSingle(db *gorm.DB, userID uuid.UUID, transaction 
 }
 
 func (repo *repository) CreateMany(db *gorm.DB, userID uuid.UUID, transactions []*Transaction) ([]*TransactionResponseItem, error) {
+	if db == nil {
+		db = repo.db
+	}
 
-	if err := repo.db.Select("*").Create(transactions).Error; err != nil {
+	if err := db.Select("*").Create(transactions).Error; err != nil {
 		return nil, mapPGError(err)
 	}
 
-	idList := make([]uuid.UUID, len(transactions))
-	for _, tx := range transactions {
-		idList = append(idList, tx.ID)
-	}
-
-	return repo.GetDTOByIDs(db, userID, idList)
+	return repo.GetDTOByIDs(db, userID, transactionIDsFromTransactions(transactions))
 }
 
 func (repo *repository) GetDTOByID(db *gorm.DB, userID, transactionID uuid.UUID) (*TransactionResponseItem, error) {
@@ -393,6 +393,31 @@ func (repo *repository) CalculateAccountBalance(db *gorm.DB, userID uuid.UUID, a
 	return total, nil
 }
 
+func (repo *repository) UpsertTransactionNote(db *gorm.DB, userID, transactionID uuid.UUID, notes string) error {
+	if db == nil {
+		db = repo.db
+	}
+
+	if strings.TrimSpace(notes) == "" {
+		return repo.DeleteTransactionNote(db, userID, transactionID)
+	}
+
+	return db.Exec(`
+		INSERT INTO transaction_notes (transaction_id, user_id, notes, created_at, updated_at)
+		VALUES (?, ?, ?, now(), now())
+		ON CONFLICT (transaction_id)
+		DO UPDATE SET notes = EXCLUDED.notes, user_id = EXCLUDED.user_id, updated_at = now()
+	`, transactionID, userID, notes).Error
+}
+
+func (repo *repository) DeleteTransactionNote(db *gorm.DB, userID, transactionID uuid.UUID) error {
+	if db == nil {
+		db = repo.db
+	}
+
+	return db.Where("user_id = ? AND transaction_id = ?", userID, transactionID).Delete(&TransactionNote{}).Error
+}
+
 func (repo *repository) baseQueryWithCodes(db *gorm.DB) *gorm.DB {
 	if db == nil {
 		db = repo.db
@@ -403,6 +428,7 @@ func (repo *repository) baseQueryWithCodes(db *gorm.DB) *gorm.DB {
 			t.id, 
 			c.code as category_code, 
 			t.description, 
+			COALESCE(tn.notes, '') as notes,
 			t.date, 
 			a.code as account_code, 
 			t.amount,
@@ -417,6 +443,7 @@ func (repo *repository) baseQueryWithCodes(db *gorm.DB) *gorm.DB {
 		Joins("JOIN accounts a ON a.id = t.account_id").
 		Joins("JOIN categories c ON c.id = t.category_id").
 		Joins("LEFT JOIN accounts a2 ON a2.id = t.transfer_account_id").
+		Joins("LEFT JOIN transaction_notes tn ON tn.transaction_id = t.id AND tn.user_id = t.user_id").
 		Joins(`LEFT JOIN (
 			SELECT
 				user_id,

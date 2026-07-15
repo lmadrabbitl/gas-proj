@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, OnInit, signal } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnInit, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { ReferenceDataService } from '../../data/reference-data.service';
@@ -15,6 +15,7 @@ type EntryType = 'REVENUE' | 'EXPENSE' | 'TRANSFER' | '';
 interface DraftTransactionRow {
   id: number;
   description: string;
+  notes: string;
   amount: string;
   amountManualDecimal: boolean;
   type: EntryType;
@@ -251,6 +252,16 @@ const INSERT_COLUMN_COUNT = 7;
                         +
                       </button>
                       <button
+                        class="icon-action notes-action"
+                        type="button"
+                        [class.has-notes]="row.notes.trim().length > 0"
+                        [title]="messages.actions.notesTitle"
+                        [attr.aria-label]="messages.actions.notesAria"
+                        (click)="$event.stopPropagation(); openNotesModal(row)"
+                      >
+                        📝
+                      </button>
+                      <button
                         class="icon-action"
                         type="button"
                         [title]="messages.actions.clearTitle"
@@ -329,6 +340,33 @@ const INSERT_COLUMN_COUNT = 7;
         }
       </div>
     </section>
+
+    @if (notesModalOpen()) {
+      <div class="modal-backdrop" (click)="closeNotesModal()">
+        <section class="panel notes-modal" (click)="$event.stopPropagation()">
+          <div class="panel-header">
+            <div>
+              <h2>{{ messages.notesModal.title }}</h2>
+              <p>{{ messages.notesModal.subtitle }}</p>
+            </div>
+            <button class="ghost-button" type="button" (click)="closeNotesModal()">{{ messages.notesModal.close }}</button>
+          </div>
+          <label class="notes-field">
+            {{ messages.notesModal.label }}
+            <textarea
+              rows="8"
+              [ngModel]="notesDraft()"
+              (ngModelChange)="notesDraft.set($event)"
+              [placeholder]="messages.notesModal.placeholder"
+            ></textarea>
+          </label>
+          <div class="notes-modal-actions">
+            <button class="ghost-button" type="button" (click)="closeNotesModal()">{{ messages.notesModal.cancel }}</button>
+            <button class="primary-button" type="button" (click)="saveNotes()">{{ messages.notesModal.save }}</button>
+          </div>
+        </section>
+      </div>
+    }
   `,
 })
 export class InsertTransactionsComponent implements OnInit, AfterViewInit {
@@ -349,6 +387,9 @@ export class InsertTransactionsComponent implements OnInit, AfterViewInit {
   readonly menuOpenUpward = signal(false);
   readonly menuPosition = signal({ top: 0, left: 0, width: 160 });
   readonly activeMenuKind = signal<MenuKind>(null);
+  readonly notesModalRowId = signal<number | null>(null);
+  readonly notesDraft = signal('');
+  readonly notesModalOpen = computed(() => this.notesModalRowId() !== null);
 
   private nextId = 1;
   private closeCategoryMenuTimer: ReturnType<typeof setTimeout> | null = null;
@@ -961,6 +1002,34 @@ export class InsertTransactionsComponent implements OnInit, AfterViewInit {
     return filledRows.length > 0 && filledRows.every((row) => this.rowValidation(row).valid);
   }
 
+  openNotesModal(row: DraftTransactionRow): void {
+    this.closeAllMenus();
+    this.notesModalRowId.set(row.id);
+    this.notesDraft.set(row.notes);
+  }
+
+  closeNotesModal(): void {
+    this.notesModalRowId.set(null);
+    this.notesDraft.set('');
+  }
+
+  saveNotes(): void {
+    const rowId = this.notesModalRowId();
+    if (rowId === null) {
+      return;
+    }
+
+    const row = this.rows().find((candidate) => candidate.id === rowId);
+    if (!row) {
+      this.closeNotesModal();
+      return;
+    }
+
+    row.notes = this.notesDraft();
+    this.rows.update((rows) => [...rows]);
+    this.closeNotesModal();
+  }
+
   submit(): void {
     if (!this.canSubmit()) {
       return;
@@ -1040,6 +1109,7 @@ export class InsertTransactionsComponent implements OnInit, AfterViewInit {
     return {
       date: dateInputToIso(brazilianDateToQuery(normalizedDate)),
       description: row.description.trim(),
+      notes: row.notes.trim() ? row.notes : null,
       amount: row.type === 'EXPENSE' ? -amount : amount,
       account_code: row.accountCode,
       category_code: this.matchedCategory(row)!.Code,
@@ -1291,6 +1361,7 @@ export class InsertTransactionsComponent implements OnInit, AfterViewInit {
     return {
       id,
       description: '',
+      notes: '',
       amount: '',
       amountManualDecimal: false,
       type: '',
@@ -1310,6 +1381,7 @@ export class InsertTransactionsComponent implements OnInit, AfterViewInit {
   private isEmpty(row: DraftTransactionRow): boolean {
     return (
       !row.description.trim() &&
+      !row.notes.trim() &&
       !row.amount.trim() &&
       !row.type &&
       !row.typeLabel.trim() &&

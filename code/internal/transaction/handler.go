@@ -38,6 +38,7 @@ type CreateSingleTransaction struct {
 	IsTransfer           bool      `json:"is_transfer" binding:"required"`
 	TransferAccountCode  *string   `json:"account_transfer"`
 	ExcludeFromDashboard bool      `json:"exclude_from_dashboard"`
+	Notes                *string   `json:"notes"`
 }
 
 type ChangeTransactionInput struct {
@@ -49,6 +50,7 @@ type ChangeTransactionInput struct {
 	IsTransfer           *bool      `json:"is_transfer"`
 	TransferAccountCode  *string    `json:"account_transfer"`
 	ExcludeFromDashboard *bool      `json:"exclude_from_dashboard"`
+	Notes                *string    `json:"notes"`
 }
 
 type BulkChangeTransactionInput struct {
@@ -77,6 +79,7 @@ type TransactionResponseItem struct {
 	ID                       uuid.UUID  `json:"id" gorm:"column:id"`
 	CategoryCode             string     `json:"category_code" gorm:"column:category_code"`
 	Description              string     `json:"description" gorm:"column:description"`
+	Notes                    string     `json:"notes" gorm:"column:notes"`
 	Date                     time.Time  `json:"date" gorm:"column:date"`
 	AccountCode              string     `json:"account_code" gorm:"column:account_code"`
 	Amount                   int64      `json:"amount" gorm:"column:amount"`
@@ -171,6 +174,7 @@ func (h *Handler) CreateTransaction(c *gin.Context) {
 			IsTransfer:           tx.IsTransfer,
 			TransferAccountCode:  tx.TransferAccountCode,
 			ExcludeFromDashboard: tx.ExcludeFromDashboard,
+			Notes:                tx.Notes,
 		}
 		if tx.TransferAccountCode != nil {
 			singleTx.TransferAccountCode = tx.TransferAccountCode
@@ -464,6 +468,7 @@ func (h *Handler) UpdateTransaction(c *gin.Context) {
 		IsTransfer:           req.IsTransfer,
 		TransferAccountCode:  req.TransferAccountCode,
 		ExcludeFromDashboard: req.ExcludeFromDashboard,
+		Notes:                req.Notes,
 	}
 
 	if updateRequest.IsEmpty() {

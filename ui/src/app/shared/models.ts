@@ -279,6 +279,7 @@ export interface Transaction {
   id: string;
   category_code: string;
   description: string;
+  notes?: string;
   date: string;
   account_code: string;
   amount: number;
@@ -505,6 +506,7 @@ export interface TransactionPayload {
   date: string;
   category_code: string;
   description: string;
+  notes?: string | null;
   amount: number;
   account_code: string;
   is_transfer: boolean;

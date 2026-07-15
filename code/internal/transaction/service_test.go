@@ -23,6 +23,8 @@ type transactionRepoStub struct {
 	getNextTransferIDFn        func(db *gorm.DB) (int64, error)
 	calculateAccountBalanceFn  func(db *gorm.DB, userID uuid.UUID, accCode string) (int64, error)
 	listVisibleByCategoryIDsFn func(userID uuid.UUID, categoryIDs []uuid.UUID) ([]TransactionCategoryMatchRow, error)
+	upsertTransactionNoteFn    func(db *gorm.DB, userID, transactionID uuid.UUID, notes string) error
+	deleteTransactionNoteFn    func(db *gorm.DB, userID, transactionID uuid.UUID) error
 }
 
 func (s *transactionRepoStub) CreateSingle(db *gorm.DB, userID uuid.UUID, transaction *Transaction) (*TransactionResponseItem, error) {
@@ -96,6 +98,20 @@ func (s *transactionRepoStub) ListVisibleByCategoryIDs(userID uuid.UUID, categor
 		return []TransactionCategoryMatchRow{}, nil
 	}
 	return s.listVisibleByCategoryIDsFn(userID, categoryIDs)
+}
+
+func (s *transactionRepoStub) UpsertTransactionNote(db *gorm.DB, userID, transactionID uuid.UUID, notes string) error {
+	if s.upsertTransactionNoteFn == nil {
+		return nil
+	}
+	return s.upsertTransactionNoteFn(db, userID, transactionID, notes)
+}
+
+func (s *transactionRepoStub) DeleteTransactionNote(db *gorm.DB, userID, transactionID uuid.UUID) error {
+	if s.deleteTransactionNoteFn == nil {
+		return nil
+	}
+	return s.deleteTransactionNoteFn(db, userID, transactionID)
 }
 
 type transactionAccountServiceStub struct {
@@ -754,8 +770,46 @@ func TestDeleteTransactionsBulkRejectsInvestmentMirror(t *testing.T) {
 	}
 }
 
+func TestUpdateTransactionCanUpdateNotesWithoutChangingTransactionFields(t *testing.T) {
+	userID := uuid.New()
+	transactionID := uuid.New()
+	savedNotes := ""
+
+	service := &transactionService{
+		repo: &transactionRepoStub{
+			getDTOByIDFn: func(db *gorm.DB, gotUserID, gotTransactionID uuid.UUID) (*TransactionResponseItem, error) {
+				if gotUserID != userID || gotTransactionID != transactionID {
+					t.Fatalf("unexpected dto lookup args: %s %s", gotUserID, gotTransactionID)
+				}
+				return &TransactionResponseItem{ID: transactionID, Notes: savedNotes}, nil
+			},
+			upsertTransactionNoteFn: func(db *gorm.DB, gotUserID, gotTransactionID uuid.UUID, notes string) error {
+				if gotUserID != userID || gotTransactionID != transactionID {
+					t.Fatalf("unexpected note args: %s %s", gotUserID, gotTransactionID)
+				}
+				savedNotes = notes
+				return nil
+			},
+		},
+	}
+
+	updated, err := service.UpdateTransaction(userID, transactionID, UpdateTransactionRequest{
+		Notes: stringPtr("observação nova"),
+	})
+	if err != nil {
+		t.Fatalf("expected notes-only update to succeed, got error: %v", err)
+	}
+	if updated == nil || updated.Notes != "observação nova" {
+		t.Fatalf("unexpected updated dto: %+v", updated)
+	}
+}
+
 func uuidPtr(id uuid.UUID) *uuid.UUID {
 	return &id
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 
 func containsUUID(values []uuid.UUID, target uuid.UUID) bool {

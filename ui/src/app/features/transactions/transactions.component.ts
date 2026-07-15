@@ -248,7 +248,11 @@ const TRANSACTION_OPERATION_OPTIONS = [
             </thead>
             <tbody>
               @for (tx of transactions(); track tx.id) {
-                <tr [class]="transactionRowClass(tx)" (click)="toggleTransactionSelection(tx.id)">
+                <tr
+                  [class]="transactionRowClass(tx)"
+                  [attr.title]="transactionNotesTooltip(tx)"
+                  (click)="toggleTransactionSelection(tx.id)"
+                >
                   <td class="selection-cell">
                     @if (isInvestmentMirror(tx)) {
                       <span class="mirror-bookmark" aria-hidden="true">
@@ -338,6 +342,12 @@ const TRANSACTION_OPERATION_OPTIONS = [
               {{ messages.form.amount }}
               <input type="text" inputmode="decimal" formControlName="amount" [placeholder]="messages.form.amountPlaceholder" />
             </label>
+            @if (editingSingle()) {
+              <label>
+                {{ messages.form.notes }}
+                <textarea rows="4" formControlName="notes" [placeholder]="messages.form.notesPlaceholder"></textarea>
+              </label>
+            }
           }
           <label>
             {{ messages.form.account }}
@@ -841,6 +851,7 @@ export class TransactionsComponent implements OnInit {
     date: [toBrazilianDateInputValue(new Date()), [Validators.required, Validators.pattern(/^\d{2}\/\d{2}\/\d{4}$/)]],
     description: ['', Validators.required],
     amount: ['0,00', Validators.required],
+    notes: [''],
     account_code: ['', Validators.required],
     category_code: ['', Validators.required],
     is_transfer: [false],
@@ -1017,6 +1028,7 @@ export class TransactionsComponent implements OnInit {
       date: toBrazilianDateInputValue(tx.date),
       description: tx.description,
       amount: centsToDecimal(tx.amount).replace('.', ','),
+      notes: tx.notes ?? '',
       account_code: tx.account_code,
       category_code: tx.category_code,
       is_transfer: Boolean(tx.account_transfer),
@@ -1027,6 +1039,7 @@ export class TransactionsComponent implements OnInit {
       date: toBrazilianDateInputValue(tx.date),
       description: tx.description,
       amount: tx.amount,
+      notes: tx.notes ?? '',
       account_code: tx.account_code,
       category_code: tx.category_code,
       is_transfer: Boolean(tx.account_transfer),
@@ -1047,6 +1060,7 @@ export class TransactionsComponent implements OnInit {
       date: toBrazilianDateInputValue(new Date()),
       description: '',
       amount: '0,00',
+      notes: '',
       account_code: '',
       category_code: '',
       is_transfer: areTransfers,
@@ -1057,6 +1071,7 @@ export class TransactionsComponent implements OnInit {
       date: '',
       description: '',
       amount: null,
+      notes: '',
       account_code: '',
       category_code: '',
       is_transfer: areTransfers,
@@ -1311,6 +1326,11 @@ export class TransactionsComponent implements OnInit {
 
   isInvestmentMirror(tx: Transaction): boolean {
     return Boolean(tx.is_investment_operation_mirror);
+  }
+
+  transactionNotesTooltip(tx: Transaction): string | null {
+    const notes = tx.notes?.trim() ?? '';
+    return notes.length > 0 ? notes : null;
   }
 
   transactionCheckboxLabel(tx: Transaction): string {
@@ -1651,6 +1671,7 @@ export class TransactionsComponent implements OnInit {
     return {
       date: dateInputToIso(brazilianDateToQuery(value.date)),
       description: value.description,
+      notes: value.notes.trim() ? value.notes : null,
       amount: decimalToCents(value.amount),
       account_code: value.account_code,
       category_code: value.category_code,
@@ -1670,6 +1691,7 @@ export class TransactionsComponent implements OnInit {
       date: toBrazilianDateInputValue(tx.date),
       description: tx.description,
       amount: tx.amount,
+      notes: tx.notes ?? '',
       account_code: tx.account_code,
       category_code: tx.category_code,
       is_transfer: this.isTransfer(tx),
@@ -1684,6 +1706,9 @@ export class TransactionsComponent implements OnInit {
     }
     if (baseline.description !== current.description) {
       payload.description = current.description;
+    }
+    if (baseline.notes !== (current.notes ?? '')) {
+      payload.notes = current.notes ?? null;
     }
     if (baseline.amount !== current.amount) {
       payload.amount = current.amount;
@@ -1755,6 +1780,7 @@ export class TransactionsComponent implements OnInit {
     this.toggleControlState('date', !multi);
     this.toggleControlState('description', !multi);
     this.toggleControlState('amount', !multi);
+    this.toggleControlState('notes', !multi);
 
     if (multi) {
       this.form.controls.account_code.clearValidators();
@@ -1779,7 +1805,7 @@ export class TransactionsComponent implements OnInit {
     this.syncMirrorFieldState();
   }
 
-  private toggleControlState(controlName: 'date' | 'description' | 'amount', enabled: boolean): void {
+  private toggleControlState(controlName: 'date' | 'description' | 'amount' | 'notes', enabled: boolean): void {
     const control = this.form.controls[controlName];
     if (enabled) {
       control.enable({ emitEvent: false });
@@ -1841,10 +1867,11 @@ export class TransactionsComponent implements OnInit {
   private syncMirrorFieldState(): void {
     const editingMirror = this.isEditingInvestmentMirror();
     const linkedBulkSelection = this.isEditingLinkedMirrorSelection();
-    const protectedControls: Array<'date' | 'description' | 'amount' | 'category_code' | 'is_transfer' | 'exclude_from_dashboard' | 'account_code' | 'account_transfer'> = [
+    const protectedControls: Array<'date' | 'description' | 'amount' | 'notes' | 'category_code' | 'is_transfer' | 'exclude_from_dashboard' | 'account_code' | 'account_transfer'> = [
       'date',
       'description',
       'amount',
+      'notes',
       'category_code',
       'is_transfer',
       'exclude_from_dashboard',
@@ -1909,6 +1936,7 @@ type EditFormBaseline = {
   date: string;
   description: string;
   amount: number | null;
+  notes: string;
   account_code: string;
   category_code: string;
   is_transfer: boolean;

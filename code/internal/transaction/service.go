@@ -61,6 +61,11 @@ type updatePair struct {
 	isInvertedSign bool
 }
 
+type transactionNoteDraft struct {
+	transactionID uuid.UUID
+	notes         string
+}
+
 type TransactionSortField string
 
 const (
@@ -104,6 +109,7 @@ type SingleTransactionRequest struct {
 	IsTransfer           bool
 	TransferAccountCode  *string
 	ExcludeFromDashboard bool
+	Notes                *string
 }
 
 type UpdateTransactionRequest struct {
@@ -115,6 +121,7 @@ type UpdateTransactionRequest struct {
 	IsTransfer           *bool
 	TransferAccountCode  *string
 	ExcludeFromDashboard *bool
+	Notes                *string
 }
 
 func (r UpdateTransactionRequest) IsEmpty() bool {
@@ -125,7 +132,8 @@ func (r UpdateTransactionRequest) IsEmpty() bool {
 		r.AccountCode == nil &&
 		r.IsTransfer == nil &&
 		r.TransferAccountCode == nil &&
-		r.ExcludeFromDashboard == nil
+		r.ExcludeFromDashboard == nil &&
+		r.Notes == nil
 }
 
 type FilterTransactionRequest struct {
@@ -180,6 +188,7 @@ func (serv *transactionService) AddTransactions(userID uuid.UUID, req CreateTran
 	}()
 
 	transactions := make([]*Transaction, 0, len(req.Transactions)*2)
+	noteDrafts := make([]transactionNoteDraft, 0, len(req.Transactions))
 	for _, t := range req.Transactions {
 		description := normalizeDescriptionForStorage(t.Description)
 		transaction := &Transaction{
@@ -267,9 +276,27 @@ func (serv *transactionService) AddTransactions(userID uuid.UUID, req CreateTran
 			transactions = append(transactions, transaction)
 		}
 
+		if t.Notes != nil {
+			trimmed := strings.TrimSpace(*t.Notes)
+			if trimmed != "" {
+				noteDrafts = append(noteDrafts, transactionNoteDraft{
+					transactionID: transaction.ID,
+					notes:         *t.Notes,
+				})
+			}
+		}
+
 	}
 
-	transactionsResp, err := serv.repo.CreateMany(dbTransaction, userID, transactions)
+	if _, err := serv.repo.CreateMany(dbTransaction, userID, transactions); err != nil {
+		return nil, err
+	}
+
+	if err := serv.syncTransactionNotes(dbTransaction, userID, noteDrafts); err != nil {
+		return nil, err
+	}
+
+	transactionsResp, err := serv.repo.GetDTOByIDs(dbTransaction, userID, transactionIDsFromTransactions(transactions))
 	if err != nil {
 		return nil, err
 	}
@@ -412,21 +439,37 @@ func (serv *transactionService) UpdateTransaction(userID uuid.UUID, transactionI
 		}
 	}()
 
-	updatedTransaction, err := serv.updateTransactionWithDB(dbTransaction, userID, transactionID, req, accountSet)
-	if err != nil {
+	needsTransactionUpdate := req.Date != nil ||
+		req.CategoryCode != nil ||
+		req.Description != nil ||
+		req.Amount != nil ||
+		req.AccountCode != nil ||
+		req.IsTransfer != nil ||
+		req.TransferAccountCode != nil ||
+		req.ExcludeFromDashboard != nil
+
+	if needsTransactionUpdate {
+		if _, err := serv.updateTransactionWithDB(dbTransaction, userID, transactionID, req, accountSet); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := serv.syncTransactionNote(dbTransaction, userID, transactionID, req.Notes); err != nil {
 		return nil, err
 	}
 
-	accCodeList, err := serv.getAccountCodesFromIds(userID, mapKeysUUID(accountSet))
-	if err != nil {
-		return nil, err
-	}
+	if needsTransactionUpdate {
+		accCodeList, err := serv.getAccountCodesFromIds(userID, mapKeysUUID(accountSet))
+		if err != nil {
+			return nil, err
+		}
 
-	if err := serv.updateAllAccountBalances(dbTransaction, userID, accCodeList); err != nil {
-		return nil, err
+		if err := serv.updateAllAccountBalances(dbTransaction, userID, accCodeList); err != nil {
+			return nil, err
+		}
 	}
 	shouldCommit = true
-	return updatedTransaction, nil
+	return serv.repo.GetDTOByID(dbTransaction, userID, transactionID)
 }
 
 func (serv *transactionService) UpdateTransactionsBulk(userID uuid.UUID, transactionIDs []uuid.UUID, req UpdateTransactionRequest) (int, error) {
@@ -694,6 +737,36 @@ func (serv *transactionService) updateTransactionPair(db *gorm.DB, userID uuid.U
 	return updatedTransaction1, nil
 }
 
+func (serv *transactionService) syncTransactionNotes(db *gorm.DB, userID uuid.UUID, drafts []transactionNoteDraft) error {
+	for _, draft := range drafts {
+		if err := serv.repo.UpsertTransactionNote(db, userID, draft.transactionID, draft.notes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (serv *transactionService) syncTransactionNote(db *gorm.DB, userID, transactionID uuid.UUID, notes *string) error {
+	if notes == nil {
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(*notes)
+	if trimmed == "" {
+		return serv.repo.DeleteTransactionNote(db, userID, transactionID)
+	}
+
+	return serv.repo.UpsertTransactionNote(db, userID, transactionID, *notes)
+}
+
+func transactionIDsFromTransactions(transactions []*Transaction) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(transactions))
+	for _, tx := range transactions {
+		ids = append(ids, tx.ID)
+	}
+	return ids
+}
+
 func (serv *transactionService) DeleteTransaction(userID uuid.UUID, transactionID uuid.UUID) error {
 	dto, err := serv.repo.GetDTOByID(nil, userID, transactionID)
 	if err != nil {
@@ -850,7 +923,8 @@ func (serv *transactionService) ensureMirrorTransactionUpdateAllowed(userID, tra
 		req.AccountCode != nil ||
 		req.IsTransfer != nil ||
 		req.TransferAccountCode != nil ||
-		req.ExcludeFromDashboard != nil {
+		req.ExcludeFromDashboard != nil ||
+		req.Notes != nil {
 		return errors.ErrInvalidInputWithCode("transaction.linked_investment_operation.protected_fields", "linked mirrored transaction fields are protected by the investment operation", nil)
 	}
 	return nil

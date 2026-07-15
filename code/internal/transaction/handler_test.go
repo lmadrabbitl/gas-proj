@@ -213,7 +213,7 @@ func TestUpdateTransactionBuildsServiceRequest(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
 	context.Params = gin.Params{{Key: "id", Value: "11111111-1111-1111-1111-111111111111"}}
-	context.Request = httptest.NewRequest(http.MethodPatch, "/transactions/11111111-1111-1111-1111-111111111111", strings.NewReader(`{"description":"mercado","amount":99}`))
+	context.Request = httptest.NewRequest(http.MethodPatch, "/transactions/11111111-1111-1111-1111-111111111111", strings.NewReader(`{"description":"mercado","amount":99,"notes":"observação"}`))
 	context.Request.Header.Set("Content-Type", "application/json")
 	context.Set("userID", uuid.MustParse("22222222-2222-2222-2222-222222222222"))
 
@@ -229,6 +229,9 @@ func TestUpdateTransactionBuildsServiceRequest(t *testing.T) {
 			}
 			if req.Amount == nil || *req.Amount != 99 {
 				t.Fatalf("unexpected amount: %+v", req.Amount)
+			}
+			if req.Notes == nil || *req.Notes != "observação" {
+				t.Fatalf("unexpected notes: %+v", req.Notes)
 			}
 			return &TransactionResponseItem{
 				ID:          transactionID,
@@ -328,7 +331,7 @@ func TestCreateTransactionBuildsBatchRequest(t *testing.T) {
 	userID := uuid.New()
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
-	context.Request = httptest.NewRequest(http.MethodPost, "/transactions", strings.NewReader(`{"transactions":[{"date":"2026-01-02T00:00:00Z","category_code":"salary","description":"Salary","amount":1500,"account_code":"cash","is_transfer":false}]}`))
+	context.Request = httptest.NewRequest(http.MethodPost, "/transactions", strings.NewReader(`{"transactions":[{"date":"2026-01-02T00:00:00Z","category_code":"salary","description":"Salary","amount":1500,"account_code":"cash","is_transfer":false,"notes":"primeira observação"}]}`))
 	context.Request.Header.Set("Content-Type", "application/json")
 	context.Set("userID", userID)
 
@@ -339,6 +342,9 @@ func TestCreateTransactionBuildsBatchRequest(t *testing.T) {
 			}
 			if len(req.Transactions) != 1 || req.Transactions[0].Description != "Salary" || req.Transactions[0].AccountCode != "cash" {
 				t.Fatalf("unexpected request: %+v", req)
+			}
+			if req.Transactions[0].Notes == nil || *req.Transactions[0].Notes != "primeira observação" {
+				t.Fatalf("unexpected notes: %+v", req.Transactions[0].Notes)
 			}
 			return []*TransactionResponseItem{{ID: uuid.New(), Description: "Salary", Amount: 1500, Date: time.Now()}}, nil
 		},
