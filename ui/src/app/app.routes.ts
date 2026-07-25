@@ -30,7 +30,12 @@ export const routes: Routes = [
       {
         path: 'investments',
         pathMatch: 'full',
-        redirectTo: 'investments/positions',
+        redirectTo: 'investments/dashboard',
+      },
+      {
+        path: 'investments/dashboard',
+        loadComponent: () =>
+          import('./features/investments/investment-dashboard.component').then((m) => m.InvestmentDashboardComponent),
       },
       {
         path: 'investments/insert',

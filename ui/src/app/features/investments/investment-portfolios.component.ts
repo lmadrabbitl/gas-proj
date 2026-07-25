@@ -71,6 +71,7 @@ interface WatchedCategoryGroup {
     </section>
 
     <nav class="panel investment-subnav">
+      <a routerLink="/investments/dashboard" routerLinkActive="active">{{ nav.dashboard }}</a>
       <a routerLink="/investments/positions" routerLinkActive="active">{{ nav.positions }}</a>
       <a routerLink="/investments/assets" routerLinkActive="active">{{ nav.assets }}</a>
       <a routerLink="/investments/insert" routerLinkActive="active">{{ nav.insert }}</a>

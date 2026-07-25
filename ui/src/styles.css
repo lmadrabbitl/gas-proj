@@ -696,6 +696,14 @@ input[readonly] {
   vertical-align: -2px;
 }
 
+.icon-action .notes-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
 .icon-action:hover {
   border-color: var(--accent);
   color: var(--accent);
@@ -1741,7 +1749,7 @@ input[readonly] {
 }
 
 .insert-col-actions {
-  width: 96px;
+  width: 126px;
 }
 
 .insert-table td:last-child,
@@ -1783,11 +1791,14 @@ input[readonly] {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 2px;
   width: 100%;
 }
 
 .transaction-insert-actions .icon-action {
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
   margin-left: 0;
 }
 

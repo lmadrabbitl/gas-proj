@@ -22,6 +22,7 @@ import { ToastService } from '../../shared/toast.service';
     </section>
 
     <nav class="panel investment-subnav">
+      <a routerLink="/investments/dashboard" routerLinkActive="active">{{ nav.dashboard }}</a>
       <a routerLink="/investments/positions" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
         {{ nav.positions }}
       </a>

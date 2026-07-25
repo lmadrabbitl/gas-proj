@@ -191,11 +191,45 @@ export const uiMessages = {
   },
   investments: {
     nav: {
+      dashboard: 'Visão geral',
       positions: 'Posições',
       assets: 'Ativos',
       insert: 'Inserir',
       operations: 'Operações',
       portfolios: 'Carteiras',
+    },
+    dashboard: {
+      eyebrow: 'Investimentos',
+      title: 'Visão geral',
+      subtitle: 'Acompanhe o valor atual da carteira e o resultado das suas posições.',
+      loading: 'Carregando investimentos...',
+      empty: 'Nenhuma posição aberta encontrada.',
+      quotePending: 'Atualizando cotações...',
+      quoteUnavailable: 'Não foi possível obter todas as cotações. Os totais de mercado consideram apenas os ativos cotados.',
+      metrics: {
+        marketValue: 'Valor de mercado',
+        costBasis: 'Custo das posições',
+        unrealizedPnl: 'Resultado não realizado',
+        realizedPnl: 'Resultado realizado',
+        dividends: 'Proventos vinculados',
+        totalPnl: 'Resultado total',
+      },
+      allocation: {
+        title: 'Alocação atual',
+        subtitle: 'Distribuição por tipo de ativo, baseada nas cotações disponíveis.',
+        empty: 'A alocação aparecerá quando houver cotações disponíveis.',
+      },
+      holdings: {
+        title: 'Maiores posições',
+        subtitle: 'Seus ativos de maior valor de mercado.',
+        ticker: 'Ticker',
+        asset: 'Ativo',
+        type: 'Tipo',
+        quantity: 'Qtd.',
+        marketValue: 'Valor de mercado',
+        unrealizedPnl: 'Resultado não realizado',
+        empty: 'A lista aparecerá quando houver cotações disponíveis.',
+      },
     },
     insert: {
       page: {

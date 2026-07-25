@@ -259,7 +259,10 @@ const INSERT_COLUMN_COUNT = 7;
                         [attr.aria-label]="messages.actions.notesAria"
                         (click)="$event.stopPropagation(); openNotesModal(row)"
                       >
-                        📝
+                        <svg class="notes-icon" aria-hidden="true" viewBox="0 0 24 24">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z" />
+                          <path d="M14 2v6h6M8 13h8M8 17h8" />
+                        </svg>
                       </button>
                       <button
                         class="icon-action"
