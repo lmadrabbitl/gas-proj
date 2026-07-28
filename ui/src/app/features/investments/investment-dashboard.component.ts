@@ -68,12 +68,6 @@ type AllocationRow = {
           </strong>
         </article>
         <article class="summary-card">
-          <span>{{ messages.metrics.realizedPnl }}</span>
-          <strong [class.result-positive]="totalRealizedPnl() > 0" [class.result-negative]="totalRealizedPnl() < 0">
-            {{ signedMoney(totalRealizedPnl()) }}
-          </strong>
-        </article>
-        <article class="summary-card">
           <span>{{ messages.metrics.dividends }}</span>
           <strong>{{ money(totalDividends()) }}</strong>
         </article>
@@ -81,6 +75,12 @@ type AllocationRow = {
           <span>{{ messages.metrics.totalPnl }}</span>
           <strong [class.result-positive]="totalPnl() > 0" [class.result-negative]="totalPnl() < 0">
             {{ signedMoney(totalPnl()) }}
+          </strong>
+        </article>
+        <article class="summary-card">
+          <span>{{ messages.metrics.returnPercentage }}</span>
+          <strong [class.result-positive]="totalReturnPercentage() > 0" [class.result-negative]="totalReturnPercentage() < 0">
+            {{ totalReturnPercentage().toFixed(2).replace('.', ',') }}%
           </strong>
         </article>
       </section>
@@ -114,7 +114,6 @@ type AllocationRow = {
               <h2>{{ messages.holdings.title }}</h2>
               <p>{{ messages.holdings.subtitle }}</p>
             </div>
-            <a class="text-link" routerLink="/investments/positions">{{ nav.positions }}</a>
           </div>
           @if (topHoldings().length === 0) {
             <p class="state-message">{{ messages.holdings.empty }}</p>
@@ -148,15 +147,14 @@ type AllocationRow = {
     .page-subtitle, .panel-header p { margin: 6px 0 0; color: var(--muted); }
     .quote-status { margin: 0 0 12px; color: var(--muted); font-size: .9rem; }
     .quote-warning { color: var(--danger); }
-    .investment-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
-    .summary-card { display: grid; gap: 8px; min-height: 100px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
-    .summary-card span { color: var(--muted); font-size: .9rem; }
-    .summary-card strong { font-size: 1.2rem; }
+    .investment-summary-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .summary-card { display: grid; gap: 6px; min-height: 78px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+    .summary-card span { color: var(--muted); font-size: .85rem; line-height: 1.2; }
+    .summary-card strong { font-size: clamp(1rem, 1.25vw, 1.15rem); white-space: nowrap; }
     .primary-summary-card { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); }
     .dashboard-grid { display: grid; grid-template-columns: minmax(260px, .85fr) minmax(0, 1.7fr); gap: 18px; }
     .panel-header { display: flex; justify-content: space-between; align-items: start; gap: 16px; margin-bottom: 18px; }
     .panel-header h2 { margin: 0; font-size: 1.1rem; }
-    .text-link { color: var(--accent-strong); text-decoration: none; white-space: nowrap; }
     .allocation-list { display: grid; gap: 16px; }
     .allocation-row { display: grid; gap: 7px; }
     .allocation-label { display: flex; justify-content: space-between; gap: 12px; }
@@ -165,7 +163,8 @@ type AllocationRow = {
     .allocation-bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
     .result-positive { color: #1b7f3b; font-weight: 600; }
     .result-negative { color: #b42318; font-weight: 600; }
-    @media (max-width: 980px) { .investment-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dashboard-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 1180px) { .investment-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .dashboard-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 980px) { .investment-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (max-width: 560px) { .investment-summary-grid { grid-template-columns: 1fr; } }
   `],
 })
@@ -184,9 +183,12 @@ export class InvestmentDashboardComponent implements OnInit {
   readonly totalMarketValue = computed(() => this.valuedPositions().reduce((total, position) => total + position.current_value, 0));
   readonly totalCostBasis = computed(() => this.positions().reduce((total, position) => total + position.total_cost_basis, 0));
   readonly totalUnrealizedPnl = computed(() => this.valuedPositions().reduce((total, position) => total + position.unrealized_pnl, 0));
-  readonly totalRealizedPnl = computed(() => this.positions().reduce((total, position) => total + position.realized_pnl, 0));
   readonly totalDividends = computed(() => this.positions().reduce((total, position) => total + position.matched_dividends_total, 0));
-  readonly totalPnl = computed(() => this.totalUnrealizedPnl() + this.totalRealizedPnl() + this.totalDividends());
+  readonly totalPnl = computed(() => this.totalUnrealizedPnl() + this.totalDividends());
+  readonly totalReturnPercentage = computed(() => {
+    const invested = this.totalCostBasis();
+    return invested === 0 ? 0 : (this.totalPnl() / invested) * 100;
+  });
   readonly missingQuoteCount = computed(() => this.positions().length - this.valuedPositions().length);
   readonly topHoldings = computed(() => [...this.valuedPositions()].sort((a, b) => b.current_value - a.current_value).slice(0, 5));
   readonly allocationRows = computed<AllocationRow[]>(() => {

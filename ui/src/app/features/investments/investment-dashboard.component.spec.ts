@@ -44,9 +44,9 @@ describe('InvestmentDashboardComponent', () => {
     expect(component.totalMarketValue()).toBe(70000);
     expect(component.totalCostBasis()).toBe(70000);
     expect(component.totalUnrealizedPnl()).toBe(0);
-    expect(component.totalRealizedPnl()).toBe(300);
     expect(component.totalDividends()).toBe(1300);
-    expect(component.totalPnl()).toBe(1600);
+    expect(component.totalPnl()).toBe(1300);
+    expect(component.totalReturnPercentage()).toBeCloseTo(1300 / 70000 * 100);
     expect(component.allocationRows().map((row) => row.type)).toEqual(['FII', 'STOCK']);
     expect(component.topHoldings().map((position) => position.asset_code)).toEqual(['XPLG11', 'PETR4']);
   });

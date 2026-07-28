@@ -207,11 +207,11 @@ export const uiMessages = {
       quotePending: 'Atualizando cotações...',
       quoteUnavailable: 'Não foi possível obter todas as cotações. Os totais de mercado consideram apenas os ativos cotados.',
       metrics: {
-        marketValue: 'Valor de mercado',
-        costBasis: 'Custo das posições',
-        unrealizedPnl: 'Resultado não realizado',
-        realizedPnl: 'Resultado realizado',
-        dividends: 'Proventos vinculados',
+        marketValue: 'Valor da carteira hoje',
+        costBasis: 'Quanto foi investido',
+        unrealizedPnl: 'Lucro / prejuízo',
+        returnPercentage: 'Rentabilidade',
+        dividends: 'Proventos',
         totalPnl: 'Resultado total',
       },
       allocation: {
